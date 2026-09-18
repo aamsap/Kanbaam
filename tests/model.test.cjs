@@ -24,3 +24,14 @@ test('initial workspace validates and survives JSON round trip',()=>{
  assert.deepEqual(M.validate(JSON.parse(JSON.stringify(s))),s);
  assert.throws(()=>M.validate({...s,version:2}));
 });
+test('task link is optional, http/https only, and rejects dangerous schemes',()=>{
+ const s=M.empty(),p=M.addProject(s,'Links');
+ assert.equal(M.saveTask(p,{title:'No link'}).link,'');
+ assert.equal(M.saveTask(p,{title:'Has link',link:'https://example.com/x'}).link,'https://example.com/x');
+ assert.throws(()=>M.saveTask(p,{title:'js',link:'javascript:alert(1)'}));
+ assert.throws(()=>M.saveTask(p,{title:'data',link:'data:text/html,x'}));
+ assert.throws(()=>M.saveTask(p,{title:'bare',link:'not a url'}));
+ // legacy tasks without a link field still validate and normalize to empty
+ const legacy=structuredClone(s);delete legacy.projects[0].tasks[0].link;
+ assert.equal(M.validate(legacy).projects[0].tasks[0].link,'');
+});

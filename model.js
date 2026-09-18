@@ -21,8 +21,9 @@
   const priority=data.priority??'medium',status=data.status??'backlog',due=data.due??'';
   if(!priorities.includes(priority)||!statuses.includes(status)) throw Error('Invalid task choice.');
   if(typeof due!=='string'||(due&&(!/^\d{4}-\d{2}-\d{2}$/.test(due)||!Number.isFinite(Date.parse(due))||new Date(due).toISOString().slice(0,10)!==due))) throw Error('Choose a valid due date.');
-  return {title,description,priority,status,due};
+  return {title,description,priority,status,due,link:link(data.link)};
  }
+ function link(v){const s=text(v??'',2000,'Link');if(!s)return '';let u;try{u=new URL(s);}catch(e){throw Error('Enter a full link starting with http:// or https://');}if(u.protocol!=='http:'&&u.protocol!=='https:')throw Error('Only http and https links are allowed.');return s;}
  function addProject(s,name){if(s.projects.length>=100) throw Error('Maximum 100 projects.'); const p={id:id(),name:text(name,80,'Project name',true),tasks:[]};s.projects.push(p);s.activeProjectId=p.id;return p;}
  function renameProject(s,key,name){const p=s.projects.find(p=>p.id===key);if(!p)throw Error('Project not found.');p.name=text(name,80,'Project name',true);}
  function deleteProject(s,key){s.projects=s.projects.filter(p=>p.id!==key);if(s.activeProjectId===key)s.activeProjectId=s.projects[0]?.id??null;}
