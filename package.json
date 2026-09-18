@@ -4,12 +4,14 @@
   "private": true,
   "description": "A local-first, no-build kanban board. Open index.html to start.",
   "scripts": {
+    "build:icons": "node scripts/build-icons.cjs",
     "test": "node --test tests/*.test.cjs",
     "test:browser": "playwright test",
-    "check": "node --check model.js && node --check storage.js && node --check app.js"
+    "check": "node --check model.js && node --check storage.js && node --check background.js && node --check app.js"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
-    "@playwright/test": "^1.63.0"
+    "@playwright/test": "^1.63.0",
+    "lucide": "^0.468.0"
   }
 }

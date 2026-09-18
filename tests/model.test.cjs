@@ -1,6 +1,17 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const M=require('../model.js');
+test('creation dates survive editing and imports; legacy dates remain unknown',()=>{
+ const s=M.empty(),p=M.addProject(s,'Dates'),t=M.saveTask(p,{title:'First'});
+ const date=t.createdAt;
+ assert.ok(Number.isFinite(Date.parse(date)));
+ M.saveTask(p,{id:t.id,title:'Changed'});
+ assert.equal(t.createdAt,date);
+ assert.equal(M.validate(s).projects[0].tasks[0].createdAt,date);
+ delete t.createdAt;
+ assert.equal(M.validate(s).projects[0].tasks[0].createdAt,null);
+ t.createdAt='invalid';assert.throws(()=>M.validate(s));
+});
 test('project and task lifecycle preserves lane order and rejects bad input',()=>{
  const s=M.empty(); const p=M.addProject(s,'  Studio  '); assert.equal(p.name,'Studio');
  const a=M.saveTask(p,{title:'One'}); const b=M.saveTask(p,{title:'Two'});
@@ -45,4 +56,46 @@ test('task tags dedupe, cap, trim, drop empties, and reject over-long entries',(
  // legacy tasks without tags normalize to an empty array
  const legacy=structuredClone(s);delete legacy.projects[0].tasks[0].tags;
  assert.deepEqual(M.validate(legacy).projects[0].tasks[0].tags,[]);
+});
+test('projects carry an optional icon and description that validate and survive legacy imports',()=>{
+ const s=M.empty(),p=M.addProject(s,'Launch',{icon:'rocket',description:'  Ship the beta  '});
+ assert.equal(p.icon,'rocket');assert.equal(p.description,'Ship the beta');
+ assert.equal(M.addProject(s,'Plain').icon,'');
+ M.updateProject(s,p.id,{name:'Launch v2',icon:'star',description:''});
+ assert.deepEqual([p.name,p.icon,p.description],['Launch v2','star','']);
+ M.renameProject(s,p.id,'Renamed');assert.equal(p.icon,'star');
+ assert.throws(()=>M.addProject(s,'Bad',{icon:'javascript:alert(1)'}));
+ assert.throws(()=>M.updateProject(s,p.id,{description:'x'.repeat(301)}));
+ const legacy=structuredClone(s);delete legacy.projects[0].icon;delete legacy.projects[0].description;
+ const v=M.validate(legacy).projects[0];assert.equal(v.icon,'');assert.equal(v.description,'');
+});
+test('custom accent color validates as a hex color and defaults for older workspaces',()=>{
+ const s=M.empty();s.settings.accent='custom';s.settings.customAccent='#FFD400';
+ assert.equal(M.validate(s).settings.customAccent,'#ffd400');
+ const legacy=structuredClone(s);delete legacy.settings.customAccent;legacy.settings.accent='forest';
+ assert.match(M.validate(legacy).settings.customAccent,/^#[0-9a-f]{6}$/);
+ for(const bad of ['red','#fff','#12345g','url(x)',42]){const b=structuredClone(s);b.settings.customAccent=bad;assert.throws(()=>M.validate(b));}
+});
+test('task card color defaults to plain, accepts known tints only, and survives edits and legacy imports',()=>{
+ const s=M.empty(),p=M.addProject(s,'Colors'),t=M.saveTask(p,{title:'Plain'});
+ assert.equal(t.color,'');
+ const tinted=M.saveTask(p,{title:'Tinted',color:'teal'});assert.equal(tinted.color,'teal');
+ M.saveTask(p,{...tinted,color:'rose'});assert.equal(tinted.color,'rose');
+ for(const bad of ['red','#ff0000','url(x)']) assert.throws(()=>M.saveTask(p,{title:'Bad',color:bad}));
+ const legacy=structuredClone(s);delete legacy.projects[0].tasks[1].color;
+ assert.equal(M.validate(legacy).projects[0].tasks[1].color,'');
+});
+test('reorderLane places a task by explicit id sequence instead of stale insertion order, and moves status',()=>{
+ const s=M.empty(),p=M.addProject(s,'Reorder');
+ const a=M.saveTask(p,{title:'A'}),b=M.saveTask(p,{title:'B',priority:'high'}),c=M.saveTask(p,{title:'C'}),d=M.saveTask(p,{title:'D',priority:'high'});
+ // creation order is A,B,C,D; simulate a drop computed against a priority-sorted view (B,D,C,A) that relocates A between D and C
+ M.reorderLane(p,'backlog',[b.id,d.id,a.id,c.id],a.id);
+ assert.deepEqual(p.tasks.map(t=>t.id),[b.id,d.id,a.id,c.id]);
+ // moving into a different status updates the task's status and drops it into that lane at the given position
+ M.reorderLane(p,'done',[a.id],a.id);
+ assert.equal(a.status,'done');
+ assert.deepEqual(p.tasks.filter(t=>t.status==='done').map(t=>t.id),[a.id]);
+ assert.deepEqual(p.tasks.filter(t=>t.status==='backlog').map(t=>t.id),[b.id,d.id,c.id]);
+ assert.throws(()=>M.reorderLane(p,'nowhere',[b.id],b.id));
+ assert.throws(()=>M.reorderLane(p,'backlog',[],'missing'));
 });

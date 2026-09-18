@@ -1,27 +1,40 @@
 # Kanbaam
 
-A small, local-first kanban board. No account, server, build step, or runtime dependencies.
+A local-first kanban board. Open `index.html` in a modern browser; no build,
+account, server, or network connection is needed at runtime.
 
 ## Start
 
-Download or clone this folder, then double-click **index.html**. Keep the HTML, CSS, and JavaScript files together. An internet connection is not required.
+1. Download or clone the complete repository, keeping its files together.
+2. Open `index.html`. Create a project or try the sample board.
+3. Your workspace saves automatically in this browser.
+4. Use **Settings > Data > Export JSON** for a portable backup.
 
-Node.js and npm are **only for contributors running tests**. They are not needed to use the app.
+The app does **not** create a file beside the HTML automatically. Browser data is
+specific to the browser profile and origin/file location; moving the app, clearing
+site data, or using private browsing can make that data unavailable. Export backups
+regularly.
 
-## A note about JSON storage
+## Features
 
-A browser cannot silently create a JSON file beside an HTML document. That restriction protects your filesystem; opening a downloaded page does not grant it permission to write arbitrary files.
-
-Kanbaam uses two storage options:
-
-- **Browser storage:** initialized automatically on first launch, with the workspace serialized as JSON in `localStorage`. This is browser-managed storage, not a visible file in the repository.
-- **A JSON file you choose:** supported browsers can ask permission to create or open a local JSON file and save changes to it during the session. Reconnect the file when reopening the app. If your browser does not support file linking, use JSON export and import instead.
-
-Browser storage belongs to the browser profile and page location. In `file://` mode its behavior is browser-dependent. Moving the folder, switching browsers, private browsing, or clearing site data can make previously stored work unavailable. **Export regular JSON backups**, especially before moving the folder. A linked file is not a multi-user database: avoid editing the same file from multiple tabs or apps simultaneously.
-
-Your task content stays on your device. Do not commit personal JSON exports to a public repository.
+- Projects with icons and descriptions; edit, archive, or delete from their menu.
+  Restore archived projects in **Settings > Data**.
+- Project-specific categories with editable names, colors, order, and completion
+  behavior. Backlog, In progress, Review, and Done are the defaults.
+- Tasks with priority, tags, due dates, links, descriptions, and optional card colors.
+- Search, priority and tag filters, and per-category priority/date sorting.
+- Pointer drag-and-drop, touch long-press dragging, and keyboard reorder controls.
+- Light/dark/system appearance, preset or custom accents, a brief session splash,
+  and reduced-motion support.
+- Device-local background images with dim and blur controls. Images are not
+  included in workspace exports.
+- Validated JSON import/export, with a backup of browser data before replacement.
+- Optional linked JSON files in browsers supporting the File System Access API.
+  File access requires permission and must be reconnected after reopening.
 
 ## Development
+
+Requires Node.js and npm. Runtime scripts and Lucide icons are bundled locally.
 
 ```sh
 npm ci
@@ -31,15 +44,25 @@ npm test
 npm run test:browser
 ```
 
-Browser tests open the actual `index.html` using `file://`; they do not substitute a development server for the advertised startup path.
+Rebuild the bundled icon subset after editing `scripts/build-icons.cjs`:
 
-## Architecture
+```sh
+npm run build:icons
+```
 
-- `index.html`: document and native forms/dialogs
-- `styles.css`: responsive layout, theme tokens, motion, and reduced-motion treatment
-- `model.js`: workspace data and validation
-- `storage.js`: browser persistence and linked JSON file operations
-- `app.js`: application interactions and rendering (cards, tags, drag, dialogs)
-- `tests/`: data/storage regression tests and real-browser checks
+Browser tests cover Chromium, responsive layouts, and automated accessibility
+checks. Real OS file pickers and physical touch devices still need manual testing.
 
-No backend, analytics, remote fonts, or CDN scripts are required.
+## Source Layout
+
+- `index.html`, `styles.css`: interface, dialogs, and themes.
+- `app.js`: interactions, rendering, and animation.
+- `model.js`: validation and project/task/category operations.
+- `storage.js`: browser persistence and optional linked-file writes.
+- `background.js`: device-local image storage and processing.
+- `assets/`: bundled icons and their upstream license.
+- `tests/`: unit and browser regression coverage.
+
+## Third-Party License
+
+Bundled Lucide icons retain their license in `assets/lucide-LICENSE`.

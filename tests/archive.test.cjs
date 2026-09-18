@@ -1,0 +1,22 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const M=require('../model.js');
+test('archive preserves tasks and restores with safe active-project fallback',()=>{
+ const s=M.empty(),a=M.addProject(s,'A'),b=M.addProject(s,'B');
+ M.saveTask(a,{title:'Retained'});
+ M.setProjectArchived(s,b.id,true);
+ assert.equal(s.activeProjectId,a.id);
+ M.setProjectArchived(s,a.id,true);
+ assert.equal(s.activeProjectId,null);
+ const loaded=M.validate(JSON.parse(JSON.stringify(s)));
+ assert.equal(loaded.projects[0].tasks.length,1);
+ assert.equal(loaded.projects[0].archived,true);
+ M.setProjectArchived(loaded,a.id,false);
+ assert.equal(loaded.activeProjectId,a.id);
+ M.deleteProject(loaded,a.id);
+ assert.equal(loaded.activeProjectId,null);
+ delete s.projects[0].archived;
+ assert.equal(M.validate(s).projects[0].archived,false);
+ s.projects[0].archived='yes';
+ assert.throws(()=>M.validate(s),/archive/);
+});

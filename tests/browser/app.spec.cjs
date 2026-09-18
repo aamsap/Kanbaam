@@ -19,14 +19,138 @@ async function addProject(page, name) {
   await expect(page.locator('h1')).toHaveText(name);
 }
 async function addTask(page, title, status = 'backlog', priority = 'medium') {
-  await page.locator('#add-task').click();
+  await page.locator('.lane-heading button').first().click();
   await page.locator('#task-form [name=title]').fill(title);
   await page.locator('#task-form [name=description]').fill('A real local task');
   await page.locator('#task-form [name=status]').selectOption(status);
   await page.locator('#task-form [name=priority]').selectOption(priority);
   await page.getByRole('button', { name: 'Save task', exact: true }).click();
 }
-async function settings(page) { await page.locator('#settings-open').click(); }
+async function settings(page, tab='Appearance') { await page.locator('#settings-open').click(); await page.getByRole('tab',{name:tab,exact:true}).click(); }
+
+test('project creation and archive clear stale filters, but resizing preserves them', async ({page})=>{
+  await addProject(page,'Original');
+  await addTask(page,'Original task');
+  await page.locator('#search').fill('nothing matches');
+  await page.setViewportSize({width:1440,height:700});
+  await expect(page.locator('#search')).toHaveValue('nothing matches');
+  await addProject(page,'New board');
+  await expect(page.locator('#search')).toHaveValue('');
+  await addTask(page,'Visible task');
+  await expect(page.locator('.task-card')).toHaveCount(1);
+  await page.locator('#search').fill('nothing matches');
+  await page.getByRole('button',{name:'Project options for New board',exact:true}).click();
+  await page.getByRole('menuitem',{name:'Archive project',exact:true}).click();
+  await expect(page.locator('#search')).toHaveValue('');
+  await expect(page.locator('.card-title')).toHaveText(['Original task']);
+});
+
+test('background removal failure does not claim deletion or discard the image',async({page})=>{
+  await settings(page,'Background');
+  const png=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=16;c.height=16;c.getContext('2d').fillRect(0,0,16,16);return c.toDataURL().split(',')[1];});
+  await page.locator('#bg-file').setInputFiles({name:'pixel.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
+  await expect(page.locator('#bg-remove')).toBeVisible();
+  await page.evaluate(()=>{window.KanbaamBackground.deleteImage=async()=>{throw Error('Storage unavailable');};});
+  await page.locator('#bg-remove').click();
+  await expect(page.locator('#bg-status')).toContainText('Could not remove');
+  await expect(page.locator('#bg-remove')).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('data-bg','custom');
+});
+
+test('splash uses saved theme, dismisses and only appears once per session', async ({page}) => {
+  await page.evaluate(k=>{const s=JSON.parse(localStorage.getItem(k));s.settings.accent='forest';localStorage.setItem(k,JSON.stringify(s));sessionStorage.removeItem('kanbaam.splash.seen');},key);
+  await page.setViewportSize({width:390,height:844});
+  await page.reload();
+  await expect(page.locator('#splash')).toBeVisible();
+  expect(await page.locator('#splash').evaluate(el=>getComputedStyle(el).backgroundColor)).toBe('rgb(40, 100, 72)');
+  await page.locator('.splash-tagline').evaluate(el=>Promise.all(el.getAnimations().map(a=>a.finished)));
+  await page.screenshot({path:'test-results/splash-mobile.png'});
+  await page.getByRole('button',{name:'Enter workspace',exact:true}).click();
+  await expect(page.locator('#splash')).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator('#splash')).toHaveCount(0);
+  await page.evaluate(()=>sessionStorage.removeItem('kanbaam.splash.seen'));
+  await page.reload();
+  await expect(page.locator('#splash')).toHaveCount(0,{timeout:4000});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.evaluate(()=>sessionStorage.removeItem('kanbaam.splash.seen'));
+  await page.reload();
+  await expect(page.locator('#splash')).toHaveCount(0);
+});
+
+test('projects archive and restore with tasks intact', async ({page}) => {
+  await addProject(page,'Keep');
+  await addTask(page,'Preserved task');
+  await addProject(page,'Other');
+  await page.getByRole('button',{name:'Project options for Keep',exact:true}).click();
+  await page.getByRole('menuitem',{name:'Archive project',exact:true}).click();
+  await expect(page.locator('h1')).toHaveText('Other');
+  await expect(page.locator('#projects .project-button')).toHaveCount(1);
+  await page.getByRole('button',{name:'Project options for Other',exact:true}).click();
+  await page.getByRole('menuitem',{name:'Archive project',exact:true}).click();
+  await page.reload();
+  await expect(page.locator('#welcome')).toBeVisible();
+  await settings(page,'Data');
+  await expect(page.locator('#archived-projects .category-row')).toHaveCount(2);
+  await page.getByRole('button',{name:'Restore project Keep',exact:true}).click();
+  await page.keyboard.press('Escape');
+  await page.reload();
+  await expect(page.locator('h1')).toHaveText('Keep');
+  await expect(page.locator('.task-card')).toHaveCount(1);
+  await expect(page.locator('#projects .project-button')).toHaveCount(1);
+});
+
+test('dynamic categories support tasks, editing, ordering, safe removal and persistence', async ({ page }) => {
+  await addProject(page, 'Custom workflow');
+  await expect(page.locator('.lane-heading h2')).toHaveText(['Backlog','In progress','Review','Done']);
+  await page.locator('#add-category').click();
+  await page.getByLabel('Category name', {exact:true}).fill('Shipped');
+  await page.getByLabel('Category color', {exact:true}).fill('#168477');
+  await page.getByLabel('Counts as completed').check();
+  await page.getByRole('button',{name:'Save category',exact:true}).click();
+  const status = await page.locator('.lane').last().getAttribute('data-status');
+  await addTask(page, 'Release notes', status);
+  await settings(page, 'Categories');
+  await page.getByRole('button',{name:'Edit category Shipped',exact:true}).click();
+  await page.getByLabel('Category name', {exact:true}).fill('Released');
+  await page.getByRole('button',{name:'Save category',exact:true}).click();
+  await page.getByRole('button',{name:'Move Released left',exact:true}).click();
+  await page.keyboard.press('Escape');
+  await page.reload();
+  await expect(page.locator('.lane-heading h2')).toHaveText(['Backlog','In progress','Review','Released','Done']);
+  await expect(page.locator(`.lane[data-status="${status}"] .task-card`)).toHaveCount(1);
+  await settings(page, 'Categories');
+  await page.getByRole('button',{name:'Delete category Released',exact:true}).click();
+  await page.locator('#remove-category-form').getByRole('button',{name:'Cancel',exact:true}).click();
+  await expect(page.locator('#category-list')).toContainText('Released');
+  await page.getByRole('button',{name:'Delete category Released',exact:true}).click();
+  await page.locator('#category-destination').selectOption('done');
+  await page.locator('#remove-category-form').getByRole('button',{name:'Delete category',exact:true}).click();
+  await page.keyboard.press('Escape');
+  await page.reload();
+  await expect(page.locator('.lane')).toHaveCount(4);
+  await expect(page.locator('.lane[data-status=done] .task-card')).toHaveCount(1);
+  await addProject(page, 'Independent workflow');
+  await expect(page.locator('.lane-heading h2')).toHaveText(['Backlog','In progress','Review','Done']);
+});
+
+test('settings tabs are keyboard accessible and fit narrow screens', async ({ page }) => {
+  await addProject(page, 'Settings coverage');
+  await page.setViewportSize({width:320,height:740});
+  await settings(page);
+  await page.getByRole('tab',{name:'Appearance',exact:true}).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab',{name:'Background',exact:true})).toBeFocused();
+  for (const name of ['Appearance','Background','Categories','Data']) {
+    await page.getByRole('tab',{name,exact:true}).click();
+    await expect(page.getByRole('tabpanel')).toHaveCount(1);
+    const overflow = await page.locator('#settings-dialog').evaluate(el=>el.scrollWidth>el.clientWidth);
+    expect(overflow).toBe(false);
+    const results = await new AxeBuilder({page}).include('#settings-dialog').analyze();
+    expect(results.violations).toEqual([]);
+  }
+  await page.screenshot({path:'test-results/category-settings-mobile.png'});
+});
 
 test('starts offline, creates browser JSON automatically, project lifecycle persists', async ({ page, context }) => {
   await context.setOffline(true);
@@ -35,18 +159,282 @@ test('starts offline, creates browser JSON automatically, project lifecycle pers
   await addProject(page, 'Studio work');
   await addTask(page, 'Finish the brief');
   await addProject(page, 'Weekend');
-  await page.locator('#projects button').filter({ hasText: 'Studio work' }).click();
+  await page.locator('#projects .project-button').filter({ hasText: 'Studio work' }).click();
   await expect(page.getByRole('button', { name: 'Edit task: Finish the brief', exact: true })).toBeVisible();
-  await page.locator('#rename-project').click();
+  await page.getByRole('button', { name: 'Project options for Studio work', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Edit project' })).toBeFocused();
+  await page.getByRole('menuitem', { name: 'Edit project' }).click();
   await page.getByLabel('Project name', { exact: true }).fill('Studio launch');
+  await page.locator('#project-dialog').getByLabel('Description').fill('Everything for the spring launch');
+  await page.getByRole('radio', { name: 'Rocket', exact: true }).check();
   await page.getByRole('button', { name: 'Save project', exact: true }).click();
   await page.reload();
   await expect(page.locator('h1')).toHaveText('Studio launch');
+  await expect(page.locator('#project-description')).toHaveText('Everything for the spring launch');
+  await expect(page.locator('#projects .project-button[aria-current=true] .project-mark svg')).toHaveCount(1);
   await expect(page.locator('.task-card')).toHaveCount(1);
-  await page.locator('#delete-project').click();
+  await page.getByRole('button', { name: 'Project options for Studio launch', exact: true }).click();
+  await page.keyboard.press('End');
+  await expect(page.getByRole('menuitem', { name: 'Delete project' })).toBeFocused();
+  await page.keyboard.press('Enter');
   await page.locator('#confirm-button').click();
   await expect(page.locator('h1')).toHaveText('Weekend');
   await expect(page.locator('.task-card')).toHaveCount(0);
+});
+
+test('header toggle switches light and dark, and the mobile project menu edits the current project', async ({ page }) => {
+  await page.locator('#sample-project').click();
+  await settings(page);
+  await page.getByRole('combobox', { name: 'Color mode', exact: true }).selectOption('light');
+  await page.locator('#settings-dialog [data-close]').click();
+  await page.getByRole('button', { name: 'Switch to dark mode', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-dark', 'true');
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-dark', 'true');
+  await page.getByRole('button', { name: 'Switch to light mode', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-dark', 'false');
+  await page.setViewportSize({ width: 390, height: 700 });
+  await page.getByRole('button', { name: 'Project options', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Edit project' }).click();
+  await expect(page.getByLabel('Project name', { exact: true })).toHaveValue('A fresh start · sample');
+});
+
+test('custom accent color re-themes the app, stays readable for any pick, and persists', async ({ page }) => {
+  await page.locator('#sample-project').click();
+  for (const color of ['#ffd400', '#9ff4ff', '#f5f5f5', '#111111']) {
+    for (const mode of ['light', 'dark']) {
+      await settings(page);
+      await page.getByRole('combobox', { name: 'Color mode', exact: true }).selectOption(mode);
+      await page.getByLabel('Custom color', { exact: true }).fill(color);
+      await expect(page.locator('html')).toHaveAttribute('data-accent', 'custom');
+      await expect(page.getByRole('radio', { name: 'Custom', exact: true })).toBeChecked();
+      await page.locator('#settings-dialog [data-close]').click();
+      await page.evaluate(() => Promise.allSettled(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)));
+      const violations = (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations;
+      expect(violations.map(v => ({ color, mode, id: v.id, nodes: v.nodes.map(n => n.target) }))).toEqual([]);
+    }
+  }
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-accent', 'custom');
+  await settings(page);
+  await expect(page.getByLabel('Custom color', { exact: true })).toHaveValue('#111111');
+  await page.getByRole('radio', { name: 'Forest', exact: true }).check();
+  await expect(page.locator('html')).toHaveAttribute('data-accent', 'forest');
+  await expect(page.getByLabel('Custom color', { exact: true })).toHaveValue('#111111');
+});
+
+test('task card color defaults to plain, is chosen in the task dialog, persists and stays readable', async ({ page }) => {
+  await addProject(page, 'Colors');
+  await page.locator('.lane-heading button').first().click();
+  await expect(page.getByRole('radio', { name: 'Default', exact: true })).toBeChecked();
+  await page.locator('#task-form [name=title]').fill('Plain card');
+  await page.getByRole('button', { name: 'Save task', exact: true }).click();
+  await expect(page.locator('.task-card').filter({ hasText: 'Plain card' })).not.toHaveAttribute('data-color');
+  const tints = ['rose', 'amber', 'lime', 'teal', 'sky', 'violet', 'slate'];
+  for (const tint of tints) {
+    await page.locator('.lane-heading button').first().click();
+    await page.locator('#task-form [name=title]').fill('Card ' + tint);
+    await page.locator('#task-form [name=description]').fill('Readable secondary text');
+    await page.locator('#task-form').getByRole('radio', { name: tint[0].toUpperCase() + tint.slice(1), exact: true }).check();
+    await page.getByRole('button', { name: 'Save task', exact: true }).click();
+  }
+  await page.reload();
+  for (const tint of tints) await expect(page.locator('.task-card').filter({ hasText: 'Card ' + tint })).toHaveAttribute('data-color', tint);
+  await page.getByRole('button', { name: 'Edit task: Card teal', exact: true }).click({ force: true });
+  await expect(page.locator('#task-form').getByRole('radio', { name: 'Teal', exact: true })).toBeChecked();
+  await page.locator('#task-form').getByRole('radio', { name: 'Default', exact: true }).check();
+  await page.getByRole('button', { name: 'Save task', exact: true }).click();
+  await expect(page.locator('.task-card').filter({ hasText: 'Card teal' })).not.toHaveAttribute('data-color');
+  for (const mode of ['light', 'dark']) {
+    await settings(page);
+    await page.getByRole('combobox', { name: 'Color mode', exact: true }).selectOption(mode);
+    await page.locator('#settings-dialog [data-close]').click();
+    await page.evaluate(() => Promise.allSettled(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)));
+    const violations = (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations;
+    expect(violations.map(v => ({ mode, id: v.id, nodes: v.nodes.map(n => n.target) }))).toEqual([]);
+  }
+});
+
+test('background settings: animated default, device-only custom image with dim and blur in both modes', async ({ page }) => {
+  await page.locator('#sample-project').click();
+  await expect(page.locator('html')).toHaveAttribute('data-bg', 'default');
+  expect(await page.locator('.bg-art .bg-flow-a').evaluate(n => getComputedStyle(n).animationName)).toBe('flow-a');
+  await settings(page,'Background');
+  const dialog = page.locator('#settings-dialog');
+  await expect(dialog.getByRole('radio', { name: 'Default', exact: true })).toBeChecked();
+  await expect(dialog.getByRole('radio', { name: 'Custom image', exact: true })).toBeDisabled();
+  await page.locator('#bg-file').setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('not an image') });
+  await expect(page.locator('#bg-status')).toContainText('Choose a PNG');
+  const png = Buffer.from(await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 64; c.height = 48; const g = c.getContext('2d'); g.fillStyle = '#2f7d5b'; g.fillRect(0, 0, 64, 48); g.fillStyle = '#f2c14e'; g.fillRect(16, 12, 32, 24); return c.toDataURL('image/png').split(',')[1]; }), 'base64');
+  await page.locator('#bg-file').setInputFiles({ name: 'photo.png', mimeType: 'image/png', buffer: png });
+  await expect(page.locator('html')).toHaveAttribute('data-bg', 'custom');
+  await expect(page.locator('.bg-image')).toHaveAttribute('style', /blob:/);
+  await expect(dialog.getByRole('radio', { name: 'Custom image', exact: true })).toBeChecked();
+  await expect(page.locator('#bg-dim')).toHaveValue('25');
+  await page.getByLabel('Dim', { exact: true }).fill('50');
+  await page.getByLabel('Blur', { exact: true }).fill('12');
+  await expect(page.locator('#bg-dim-value')).toHaveText('50%');
+  await expect(page.locator('#bg-blur-value')).toHaveText('12px');
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg-dim').trim())).toBe('0.5');
+  await page.locator('#settings-dialog [data-close]').click();
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-bg', 'custom');
+  await page.locator('#theme-toggle').click();
+  await expect(page.locator('html')).toHaveAttribute('data-bg', 'custom');
+  expect(await page.evaluate(() => JSON.stringify(Kanbaam.getState()))).not.toMatch(/blob:|data:image/);
+  await settings(page,'Background');
+  await expect(page.locator('#bg-blur')).toHaveValue('12');
+  await dialog.getByRole('button', { name: 'Remove image', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-bg', 'default');
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-bg', 'default');
+  await settings(page,'Background');
+  await page.getByRole('tab',{name:'Appearance',exact:true}).click();
+  await page.getByLabel('Motion & celebrations', { exact: true }).uncheck();
+  expect(await page.locator('.bg-art .bg-flow-a').evaluate(n => getComputedStyle(n).animationName)).toBe('none');
+});
+
+test('keyboard focus survives re-renders and a drop back in place changes nothing', async ({ page }) => {
+  await page.locator('#sample-project').click();
+  const sort = page.getByLabel('Sort Backlog', { exact: true });
+  await sort.focus();
+  await sort.selectOption('priority');
+  await expect(page.getByLabel('Sort Backlog', { exact: true })).toBeFocused();
+
+  await page.getByRole('button', { name: 'Project options for A fresh start · sample', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Edit project' }).click();
+  await page.getByLabel('Project name', { exact: true }).fill('Renamed board');
+  await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  await expect(page.locator('#projects .project-button[aria-label="Renamed board"]')).toBeFocused();
+
+  await page.evaluate(() => { document.getElementById('announcement').textContent = ''; });
+  const card = page.locator('[data-status=backlog] .task-card').first();
+  const box = await card.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + 30);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 12, box.y + 40, { steps: 4 });
+  await page.mouse.move(box.x + box.width / 2, box.y + 30, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  await expect(page.getByLabel('Sort Backlog', { exact: true })).toHaveValue('priority');
+  await expect(page.locator('#announcement')).not.toContainText('Task moved');
+});
+
+test('preview deletion cancels safely, confirms and persists on mobile', async ({ page }) => {
+ await page.locator('#sample-project').click();
+ await expect(page.locator('.board-tab')).toHaveCount(0);
+ await page.setViewportSize({width:320,height:568});
+ await page.getByRole('button',{name:'View task: Make this board your own',exact:true}).click();
+ const preview=page.locator('#view-dialog');
+ await preview.getByRole('button',{name:'Delete task',exact:true}).click();
+ await expect(page.locator('#confirm-message')).toContainText('Make this board your own');
+ await page.locator('#confirm-dialog button[value=cancel]').click();
+ await expect(preview).toBeVisible();
+ await expect(page.locator('.task-card')).toHaveCount(5);
+ await preview.getByRole('button',{name:'Delete task',exact:true}).click();
+ await page.locator('#confirm-button').click();
+ await expect(preview).not.toBeVisible();
+ await expect(page.locator('.task-card')).toHaveCount(4);
+ await page.reload();
+ await expect(page.getByRole('button',{name:'View task: Make this board your own',exact:true})).toHaveCount(0);
+});
+
+test('glass surfaces have a reduced-transparency fallback', async ({ page, context }) => {
+ await page.locator('#sample-project').click();
+ expect(await page.locator('.task-card').first().evaluate(n=>getComputedStyle(n).backdropFilter)).toContain('blur');
+ const session=await context.newCDPSession(page);
+ await session.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-transparency',value:'reduce'}]});
+ expect(await page.locator('.task-card').first().evaluate(n=>getComputedStyle(n).backdropFilter)).toBe('none');
+ expect(await page.locator('body').evaluate(n=>getComputedStyle(n).backgroundImage)).toBe('none');
+ await session.detach();
+});
+
+test('tag filters, lane sorting, collapse and sticky headers work together', async ({ page }) => {
+ await page.locator('#sample-project').click();
+ await expect(page.locator('#tag-filter option')).toHaveText(['All tags','AI Project','Content','Design','Technical Content']);
+ await page.locator('#tag-filter').selectOption('design');
+ await expect(page.locator('.task-card')).toHaveCount(2);
+ await page.locator('#clear-filters').click();
+ await page.getByLabel('Sort Backlog', {exact:true}).selectOption('priority');
+ await expect(page.locator('[data-status=backlog] .card-title')).toHaveText(['Gather the loose ends','Make this board your own']);
+ await page.getByLabel('Sort Backlog', {exact:true}).selectOption('oldest');
+ await expect(page.locator('[data-status=backlog] .card-title')).toHaveText(['Make this board your own','Gather the loose ends']);
+ await page.getByRole('button',{name:'Toggle sidebar',exact:true}).click();
+ await expect(page.locator('body')).toHaveClass(/sidebar-collapsed/);
+ await page.getByRole('button',{name:'Toggle sidebar',exact:true}).click();
+ const colors=await page.locator('.tag').evaluateAll(nodes=>[...new Set(nodes.map(n=>getComputedStyle(n).backgroundColor))]);
+ expect(colors.length).toBeGreaterThan(1);
+ await page.setViewportSize({width:1440,height:600});
+ await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ const heading=await page.locator('.board-heading').boundingBox();
+ const status=await page.locator('.lane-header').first().boundingBox();
+ await page.locator('#board').evaluate(n=>n.scrollTop=150);
+ expect((await page.locator('.board-heading').boundingBox()).y).toBe(heading.y);
+ expect(Math.abs((await page.locator('.lane-header').first().boundingBox()).y-status.y)).toBeLessThan(3);
+});
+
+test('non-scrolling sidebar pages projects and collapses on mobile', async ({ page }) => {
+ await page.setViewportSize({width:1440,height:510});
+ for(let i=1;i<=6;i++)await addProject(page,'Project '+i);
+ await expect(page.locator('#projects .project-button[aria-current=true]')).toHaveAttribute('aria-label','Project 6');
+ await expect(page.locator('#projects .project-button')).toHaveCount(2);
+ await page.getByRole('button',{name:'Previous projects',exact:true}).click();
+ await expect(page.locator('#projects .project-button')).toHaveCount(2);
+ expect(await page.locator('.sidebar').evaluate(n=>n.scrollHeight<=n.clientHeight)).toBe(true);
+ const settingsBox=await page.locator('#settings-open').boundingBox();
+ expect(settingsBox.y+settingsBox.height).toBeLessThanOrEqual(510);
+ await page.getByRole('button',{name:'Next projects',exact:true}).click();
+ await expect(page.locator('#projects .project-button')).toHaveCount(2);
+ await page.locator('#projects .project-button').filter({hasText:'Project 6'}).click();
+ await page.setViewportSize({width:390,height:700});
+ await page.getByRole('combobox',{name:'Current project',exact:true}).selectOption({label:'Project 2'});
+ await expect(page.locator('h1')).toHaveText('Project 2');
+ expect(await page.locator('.sidebar').evaluate(n=>getComputedStyle(n).overflowY)).toBe('hidden');
+ await page.getByRole('button',{name:'Toggle sidebar',exact:true}).click();
+ await expect(page.locator('.sidebar')).toHaveClass(/collapsed/);
+ await page.locator('#settings-open').click();
+ await expect(page.locator('#settings-dialog')).toBeVisible();
+ await page.locator('#settings-dialog [data-close]').click();
+ await page.getByRole('button',{name:'Toggle sidebar',exact:true}).click();
+ await expect(page.locator('#new-project')).toBeVisible();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+
+test('short screens retain usable board space and sticky headers with long names', async ({ page }) => {
+ await page.locator('#sample-project').click();
+ await page.evaluate(() => {
+   const state=Kanbaam.getState(), project=state.projects[0];
+   project.name='A very long project name for a complex launch across multiple product teams';
+   for(let i=0;i<15;i++)KanbaamModel.saveTask(project,{title:'Release task '+i,description:'Detailed work for the launch',tags:['Product']});
+   localStorage.setItem(Kanbaam.storageKey,JSON.stringify(state));
+ });
+ await page.reload();
+ for(const [width,height] of [[1440,900],[768,600],[390,667],[320,568],[844,390]]) {
+   await page.setViewportSize({width,height});
+   await page.locator('#board').evaluate(n=>n.scrollTop=0);
+   const board=await page.locator('#board').boundingBox();
+   expect(board.height).toBeGreaterThan(height*0.5);
+   const heading=await page.locator('.board-heading').boundingBox();
+   const status=await page.locator('.lane-header').first().boundingBox();
+   await page.locator('#board').evaluate(n=>n.scrollTop=240);
+   expect(await page.locator('#board').evaluate(n=>n.scrollTop)).toBeGreaterThan(0);
+   expect((await page.locator('.board-heading').boundingBox()).y).toBe(heading.y);
+   expect(Math.abs((await page.locator('.lane-header').first().boundingBox()).y-status.y)).toBeLessThan(1);
+   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+   await page.screenshot({path:`test-results/redesign-${width}x${height}.png`});
+ }
+});
+
+test('mobile filters expose tags and clear correctly', async ({ page }) => {
+ await page.locator('#sample-project').click();
+ await page.setViewportSize({width:390,height:667});
+ await page.getByRole('button',{name:'Filters',exact:true}).click();
+ await page.locator('#tag-filter').selectOption('design');
+ await expect(page.locator('.task-card')).toHaveCount(2);
+ await page.locator('#clear-filters').click();
+ await expect(page.locator('.task-card')).toHaveCount(5);
+ await page.getByRole('button',{name:'Filters',exact:true}).click();
+ await expect(page.locator('#tag-filter')).not.toBeVisible();
 });
 
 test('task edit, filtering, drag, accessible reordering, delete and reload', async ({ page }) => {
@@ -55,6 +443,7 @@ test('task edit, filtering, drag, accessible reordering, delete and reload', asy
   await addTask(page, 'Second');
   await page.getByRole('button', { name: 'Move Second up', exact: true }).click();
   await expect(page.locator('[data-status=backlog] .card-title')).toHaveText(['Second', 'First']);
+  await page.evaluate(()=>Promise.allSettled(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)));
   await page.locator('.task-card').filter({ hasText: 'First' }).dragTo(page.locator('[data-status=progress] .lane-cards'));
   await expect(page.locator('[data-status=progress] .card-title')).toHaveText(['First']);
   await page.getByRole('button', { name: 'Edit task: First', exact: true }).click();
@@ -95,7 +484,7 @@ test('theme and motion settings persist; OS reduced motion takes priority', asyn
 test('real JSON download round trip, confirmation and invalid import protection', async ({ page }) => {
   await addProject(page, 'Export test');
   await addTask(page, '<img src=x onerror=alert(1)>');
-  await settings(page);
+  await settings(page,'Data');
   const downloadEvent = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export JSON', exact: true }).click();
   const downloaded = await downloadEvent;
@@ -104,7 +493,7 @@ test('real JSON download round trip, confirmation and invalid import protection'
   expect(data.projects[0].tasks[0].title).toBe('<img src=x onerror=alert(1)>');
   await page.locator('#settings-dialog [data-close]').click();
   await addProject(page, 'Temporary');
-  await settings(page);
+  await settings(page,'Data');
   await page.locator('#import-file').setInputFiles({ name: 'restored-a.json', mimeType: 'application/json', buffer: Buffer.from(raw) });
   await expect(page.locator('#confirm-dialog')).toBeVisible();
   await page.locator('#confirm-dialog button[value=cancel]').click();
@@ -139,10 +528,11 @@ test('responsive layouts, both modes and settings pass accessibility checks', as
     for (const mode of ['light', 'dark']) {
       await settings(page);
       await page.getByRole('combobox', { name: 'Color mode', exact: true }).selectOption(mode);
-      await page.evaluate(() => Promise.allSettled(document.getAnimations().map(a => a.finished)));
+      await page.evaluate(() => Promise.allSettled(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)));
       const dialogViolations = (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations;
       expect(dialogViolations.map(v => ({ id: v.id, nodes: v.nodes.map(n => n.target) }))).toEqual([]);
       await page.locator('#settings-dialog [data-close]').click();
+      await page.evaluate(() => Promise.allSettled(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)));
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       const violations = (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations;
       expect(violations.map(v => ({ id: v.id, nodes: v.nodes.map(n => n.target) }))).toEqual([]);
@@ -163,6 +553,32 @@ test('mobile keeps a working add-project control after the first project exists'
   await page.getByRole('button', { name: 'Save project', exact: true }).click();
   await expect(page.locator('h1')).toHaveText('Second board');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('dragging within a sorted lane inserts relative to the visible order, not stale creation order', async ({ page }) => {
+  await addProject(page, 'Sort drag');
+  await addTask(page, 'T1', 'backlog', 'low');
+  await addTask(page, 'T2', 'backlog', 'high');
+  await addTask(page, 'T3', 'backlog', 'medium');
+  await addTask(page, 'T4', 'backlog', 'high');
+  await page.getByLabel('Sort Backlog', { exact: true }).selectOption('priority');
+  await page.evaluate(() => Promise.allSettled(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)));
+  await expect(page.locator('[data-status=backlog] .card-title')).toHaveText(['T2', 'T4', 'T3', 'T1']);
+
+  const cardT1 = page.locator('[data-status=backlog] .task-card').filter({ has: page.locator('.card-title', { hasText: /^T1$/ }) });
+  const cardT4 = page.locator('[data-status=backlog] .task-card').filter({ has: page.locator('.card-title', { hasText: /^T4$/ }) });
+  const t1Box = await cardT1.boundingBox();
+  const t4Box = await cardT4.boundingBox();
+  await page.mouse.move(t1Box.x + t1Box.width / 2, t1Box.y + 15);
+  await page.mouse.down();
+  await page.mouse.move(t1Box.x + t1Box.width / 2, t1Box.y + 30, { steps: 5 });
+  await page.mouse.move(t4Box.x + t4Box.width / 2, t4Box.y + t4Box.height - 5, { steps: 15 });
+  await page.mouse.up();
+
+  // dropped visually between T4 and T3: that must be exactly where it lands, in both the live sorted view and the underlying manual order
+  await expect(page.locator('[data-status=backlog] .card-title')).toHaveText(['T2', 'T4', 'T1', 'T3']);
+  await page.getByLabel('Sort Backlog', { exact: true }).selectOption('manual');
+  await expect(page.locator('[data-status=backlog] .card-title')).toHaveText(['T2', 'T4', 'T1', 'T3']);
 });
 
 test('keyboard can create and move tasks, with escape closing and focus contained in dialog', async ({ page }) => {

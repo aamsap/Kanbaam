@@ -24,6 +24,11 @@ test('disconnect isolates failures from an in-flight old handle',async()=>{
  const link=S.writer();link.connect(old);const pending=link.enqueue('old');await new Promise(r=>setImmediate(r));link.connect(next);const second=link.enqueue('new');rejectWrite(Error('old failed'));await Promise.all([pending,second]);assert.equal(link.error,null);assert.deepEqual(output,['new']);
 });
 function memory(){const data=new Map();return {getItem:k=>data.get(k)??null,setItem:(k,v)=>data.set(k,v),data};}
+test('import size cap measures UTF-8 bytes, not just character count',()=>{
+ const store=S.create(memory(),M),raw=JSON.stringify({text:'\u2603'.repeat(Math.ceil(S.MAX_BYTES/3))});
+ assert.ok(raw.length<S.MAX_BYTES);
+ assert.throws(()=>store.parse(raw),/too large/);
+});
 test('a stale write blocked mid-flight after disconnect is aborted, never committed',async()=>{
  let release;const gate=new Promise(r=>{release=r;});const output=[];let aborted=false;
  const handle={name:'stale',createWritable:async()=>{await gate;return {write:async s=>output.push(s),close:async()=>{},abort:async()=>{aborted=true;}};}};

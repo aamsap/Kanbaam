@@ -2,7 +2,7 @@
  const KEY='kanbaam.workspace.v1',BACKUP=KEY+'.backup',MAX_BYTES=5*1024*1024;
  function create(storage,model){
   let blocked=false;
-  function parse(raw){if(typeof raw!=='string'||raw.length>MAX_BYTES)throw Error('Workspace is too large (5 MB maximum).');return model.validate(JSON.parse(raw));}
+  function parse(raw){if(typeof raw!=='string'||raw.length>MAX_BYTES||new TextEncoder().encode(raw).length>MAX_BYTES)throw Error('Workspace is too large (5 MB maximum).');return model.validate(JSON.parse(raw));}
   function serialize(state){const raw=JSON.stringify(model.validate(state));if(new TextEncoder().encode(raw).length>MAX_BYTES)throw Error('Workspace is too large (5 MB maximum).');return raw;}
   function save(state){if(blocked)throw Error('Original browser data is protected. Export your work, then import a valid workspace to recover.');storage.setItem(KEY,serialize(state));}
   function load(){try{const raw=storage.getItem(KEY);if(raw===null){const state=model.empty();save(state);return {state};}return {state:parse(raw)};}catch(error){blocked=true;return {state:model.empty(),error:'Browser storage could not be loaded. Original data is untouched. '+error.message};}}

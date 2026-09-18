@@ -1,6 +1,10 @@
 node_modules/
 test-results/
 playwright-report/
+blob-report/
+.DS_Store
+Thumbs.db
+*.log
 # Personal exports are not source code.
 kanbaam*.json
 !package.json
