@@ -1,0 +1,7 @@
+node_modules/
+test-results/
+playwright-report/
+# Personal exports are not source code.
+kanbaam*.json
+!package.json
+!package-lock.json
