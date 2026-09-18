@@ -39,7 +39,7 @@ Browser tests open the actual `index.html` using `file://`; they do not substitu
 - `styles.css`: responsive layout, theme tokens, motion, and reduced-motion treatment
 - `model.js`: workspace data and validation
 - `storage.js`: browser persistence and linked JSON file operations
-- `app.js`: application interactions and rendering
+- `app.js`: application interactions and rendering (cards, tags, drag, dialogs)
 - `tests/`: data/storage regression tests and real-browser checks
 
 No backend, analytics, remote fonts, or CDN scripts are required.

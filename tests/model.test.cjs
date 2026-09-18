@@ -35,3 +35,14 @@ test('task link is optional, http/https only, and rejects dangerous schemes',()=
  const legacy=structuredClone(s);delete legacy.projects[0].tasks[0].link;
  assert.equal(M.validate(legacy).projects[0].tasks[0].link,'');
 });
+test('task tags dedupe, cap, trim, drop empties, and reject over-long entries',()=>{
+ const s=M.empty(),p=M.addProject(s,'Tags');
+ assert.deepEqual(M.saveTask(p,{title:'No tags'}).tags,[]);
+ assert.deepEqual(M.saveTask(p,{title:'From string',tags:' Content , design ,Content, ,Design '}).tags,['Content','design']);
+ assert.deepEqual(M.saveTask(p,{title:'From array',tags:['A','a','B']}).tags,['A','B']);
+ assert.equal(M.saveTask(p,{title:'Capped',tags:Array.from({length:20},(_,i)=>'t'+i)}).tags.length,12);
+ assert.throws(()=>M.saveTask(p,{title:'Too long',tags:['x'.repeat(25)]}));
+ // legacy tasks without tags normalize to an empty array
+ const legacy=structuredClone(s);delete legacy.projects[0].tasks[0].tags;
+ assert.deepEqual(M.validate(legacy).projects[0].tasks[0].tags,[]);
+});
