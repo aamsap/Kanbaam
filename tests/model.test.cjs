@@ -76,6 +76,18 @@ test('custom accent color validates as a hex color and defaults for older worksp
  assert.match(M.validate(legacy).settings.customAccent,/^#[0-9a-f]{6}$/);
  for(const bad of ['red','#fff','#12345g','url(x)',42]){const b=structuredClone(s);b.settings.customAccent=bad;assert.throws(()=>M.validate(b));}
 });
+test('background preferences default, validate, and travel through the workspace so a linked file carries them',()=>{
+ const s=M.empty();
+ assert.deepEqual(s.settings.background,{mode:'default',dim:0,blur:0});
+ s.settings.background={mode:'custom',dim:25,blur:8};
+ const roundTripped=M.validate(JSON.parse(JSON.stringify(s)));
+ assert.deepEqual(roundTripped.settings.background,{mode:'custom',dim:25,blur:8});
+ const legacy=structuredClone(s);delete legacy.settings.background;
+ assert.deepEqual(M.validate(legacy).settings.background,{mode:'default',dim:0,blur:0});
+ for(const bad of [{mode:'wallpaper',dim:0,blur:0},{mode:'custom',dim:-1,blur:0},{mode:'custom',dim:81,blur:0},{mode:'custom',dim:0,blur:31},{mode:'custom',dim:1.5,blur:0}]){
+  const b=structuredClone(s);b.settings.background=bad;assert.throws(()=>M.validate(b));
+ }
+});
 test('task card color defaults to plain, accepts known tints only, and survives edits and legacy imports',()=>{
  const s=M.empty(),p=M.addProject(s,'Colors'),t=M.saveTask(p,{title:'Plain'});
  assert.equal(t.color,'');

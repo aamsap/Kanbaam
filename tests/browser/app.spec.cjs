@@ -19,7 +19,7 @@ async function addProject(page, name) {
   await expect(page.locator('h1')).toHaveText(name);
 }
 async function addTask(page, title, status = 'backlog', priority = 'medium') {
-  await page.locator('.lane-heading button').first().click();
+  await page.locator('#add-task').click();
   await page.locator('#task-form [name=title]').fill(title);
   await page.locator('#task-form [name=description]').fill('A real local task');
   await page.locator('#task-form [name=status]').selectOption(status);
@@ -27,6 +27,16 @@ async function addTask(page, title, status = 'backlog', priority = 'medium') {
   await page.getByRole('button', { name: 'Save task', exact: true }).click();
 }
 async function settings(page, tab='Appearance') { await page.locator('#settings-open').click(); await page.getByRole('tab',{name:tab,exact:true}).click(); }
+async function projectNames(page) {
+  return page.locator('#projects .project-button').evaluateAll(nodes => nodes.map(n => n.getAttribute('aria-label')));
+}
+function rgbToHex(rgb) {
+  const channels = rgb.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number);
+  return '#' + channels.map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
+}
+function expectedRailInk(color) {
+  return color === '#111111' ? '#ffffff' : '#202925';
+}
 
 test('project creation and archive clear stale filters, but resizing preserves them', async ({page})=>{
   await addProject(page,'Original');
@@ -100,14 +110,29 @@ test('projects archive and restore with tasks intact', async ({page}) => {
   await expect(page.locator('#projects .project-button')).toHaveCount(1);
 });
 
+test('projects can be reordered by dragging in the sidebar and persist after reload', async ({ page }) => {
+  await addProject(page, 'Alpha');
+  await addProject(page, 'Beta');
+  await addProject(page, 'Gamma');
+  expect(await projectNames(page)).toEqual(['Alpha', 'Beta', 'Gamma']);
+  await page.locator('#projects .project-row').filter({ hasText: 'Gamma' }).dragTo(page.locator('#projects .project-row').filter({ hasText: 'Alpha' }));
+  await expect.poll(() => projectNames(page)).toEqual(['Gamma', 'Alpha', 'Beta']);
+  expect(await page.evaluate(() => Kanbaam.getState().projects.filter(p => !p.archived).map(p => p.name))).toEqual(['Gamma', 'Alpha', 'Beta']);
+  await page.reload();
+  expect(await projectNames(page)).toEqual(['Gamma', 'Alpha', 'Beta']);
+});
+
 test('dynamic categories support tasks, editing, ordering, safe removal and persistence', async ({ page }) => {
   await addProject(page, 'Custom workflow');
   await expect(page.locator('.lane-heading h2')).toHaveText(['Backlog','In progress','Review','Done']);
   await page.locator('#add-category').click();
+  await expect(page.getByRole('tab',{name:'Categories',exact:true})).toHaveAttribute('aria-selected','true');
+  await page.locator('#settings-add-category').click();
   await page.getByLabel('Category name', {exact:true}).fill('Shipped');
   await page.getByLabel('Category color', {exact:true}).fill('#168477');
   await page.getByLabel('Counts as completed').check();
   await page.getByRole('button',{name:'Save category',exact:true}).click();
+  await page.keyboard.press('Escape');
   const status = await page.locator('.lane').last().getAttribute('data-status');
   await addTask(page, 'Release notes', status);
   await settings(page, 'Categories');
@@ -132,6 +157,31 @@ test('dynamic categories support tasks, editing, ordering, safe removal and pers
   await expect(page.locator('.lane[data-status=done] .task-card')).toHaveCount(1);
   await addProject(page, 'Independent workflow');
   await expect(page.locator('.lane-heading h2')).toHaveText(['Backlog','In progress','Review','Done']);
+});
+
+test('category templates can extend or replace workflows without deleting cards', async ({ page }) => {
+  await addProject(page, 'Templates');
+  await addTask(page, 'Backlog card', 'backlog');
+  await addTask(page, 'Moving card', 'progress');
+  await addTask(page, 'Finished card', 'done');
+  await settings(page, 'Categories');
+  await page.locator('#category-template').selectOption('marketing');
+  await page.locator('#extend-template').click();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.lane-heading h2')).toHaveText(['Backlog','In progress','Review','Done','Ideas','Briefed','In Production','In Review','Scheduled','Published']);
+  await expect(page.locator('.task-card')).toHaveCount(3);
+
+  await settings(page, 'Categories');
+  await page.locator('#category-template').selectOption('software');
+  await page.locator('#replace-template').click();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.lane-heading h2')).toHaveText(['Backlog','Ready','In Development','Code Review','QA','Deployed']);
+  await expect(page.locator('.lane').nth(0).locator('.card-title')).toHaveText(['Backlog card']);
+  await expect(page.locator('.lane').nth(1).locator('.card-title')).toHaveText(['Moving card']);
+  await expect(page.locator('.lane').nth(5).locator('.card-title')).toHaveText(['Finished card']);
+  await page.reload();
+  await expect(page.locator('.lane-heading h2')).toHaveText(['Backlog','Ready','In Development','Code Review','QA','Deployed']);
+  await expect(page.locator('.task-card')).toHaveCount(3);
 });
 
 test('settings tabs are keyboard accessible and fit narrow screens', async ({ page }) => {
@@ -208,6 +258,14 @@ test('custom accent color re-themes the app, stays readable for any pick, and pe
       await page.getByLabel('Custom color', { exact: true }).fill(color);
       await expect(page.locator('html')).toHaveAttribute('data-accent', 'custom');
       await expect(page.getByRole('radio', { name: 'Custom', exact: true })).toBeChecked();
+      await expect(page.getByLabel('Custom color', { exact: true })).toHaveValue(color);
+      const pickerSwatch = await page.getByLabel('Custom color', { exact: true }).evaluate(input => getComputedStyle(input).backgroundColor);
+      expect(rgbToHex(pickerSwatch)).toBe(color);
+      const rail = await page.locator('html').evaluate(root => getComputedStyle(root).getPropertyValue('--rail').trim());
+      const railInk = await page.locator('html').evaluate(root => getComputedStyle(root).getPropertyValue('--rail-ink').trim());
+      expect(rail).toBe(color);
+      expect(railInk).toBe(expectedRailInk(color));
+      await expect.poll(async () => rgbToHex(await page.locator('.sidebar').evaluate(sidebar => getComputedStyle(sidebar).backgroundColor))).toBe(color);
       await page.locator('#settings-dialog [data-close]').click();
       await page.evaluate(() => Promise.allSettled(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)));
       const violations = (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations;
@@ -479,6 +537,83 @@ test('theme and motion settings persist; OS reduced motion takes priority', asyn
   await page.getByLabel('Motion & celebrations', { exact: true }).check();
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await expect(page.locator('html')).toHaveAttribute('data-motion', 'false');
+});
+
+test('background preferences travel through the exported/linked JSON to a second browser', async ({ page }) => {
+  // Simulates two browsers sharing one linked file: browser A sets a custom background and exports;
+  // browser B (a fresh page importing that same JSON) must show the same preferences, not its own device default.
+  // The image itself stays device-local by design (see the Storage decision in an earlier session), so browser B
+  // correctly falls back to the default art since it never uploaded an image of its own.
+  await page.locator('#sample-project').click();
+  await settings(page, 'Background');
+  const png = await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 16; c.height = 16; c.getContext('2d').fillRect(0, 0, 16, 16); return c.toDataURL().split(',')[1]; });
+  await page.locator('#bg-file').setInputFiles({ name: 'pixel.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
+  await expect(page.getByRole('radio', { name: 'Custom image', exact: true })).toBeChecked();
+  await page.getByLabel('Dim', { exact: true }).fill('40');
+  await page.getByLabel('Blur', { exact: true }).fill('10');
+  expect(await page.evaluate(() => Kanbaam.getState().settings.background)).toEqual({ mode: 'custom', dim: 40, blur: 10 });
+  const downloadEvent = page.waitForEvent('download');
+  await page.getByRole('tab', { name: 'Data', exact: true }).click();
+  await page.getByRole('button', { name: 'Export JSON', exact: true }).click();
+  const raw = await fs.readFile(await (await downloadEvent).path(), 'utf8');
+  expect(JSON.parse(raw).settings.background).toEqual({ mode: 'custom', dim: 40, blur: 10 });
+  await page.locator('#settings-dialog [data-close]').click();
+
+  // Simulate a genuinely different browser: clear this origin's workspace storage AND its device-local image
+  // store, so nothing survives except what the imported JSON provides.
+  await page.evaluate(() => new Promise((resolve, reject) => {
+    localStorage.clear();
+    const req = indexedDB.deleteDatabase('kanbaam-assets');
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  }));
+  await page.reload();
+  await addProject(page, 'Second browser');
+  await settings(page, 'Data');
+  await page.locator('#import-file').setInputFiles({ name: 'shared.json', mimeType: 'application/json', buffer: Buffer.from(raw) });
+  await page.locator('#confirm-button').click();
+  await expect.poll(() => page.evaluate(() => Kanbaam.getState().settings.background)).toEqual({ mode: 'custom', dim: 40, blur: 10 });
+  await page.getByRole('tab', { name: 'Background', exact: true }).click();
+  await expect(page.locator('#bg-dim')).toHaveValue('40');
+  await expect(page.locator('#bg-blur')).toHaveValue('10');
+  // No image was ever uploaded on this device, so it correctly falls back to the default art rather than a blank custom slot.
+  await expect(page.locator('html')).toHaveAttribute('data-bg', 'default');
+});
+
+test('a linked file reconnects automatically when permission is already granted, or via a Reconnect button otherwise', async ({ page }) => {
+  // KanbaamBackground.getHandle would normally read a real FileSystemFileHandle back from IndexedDB; a mock handle
+  // (with function properties) can't survive a real IndexedDB round trip, so this stubs getHandle directly instead.
+  await page.addInitScript(() => {
+    let real;
+    Object.defineProperty(window, 'KanbaamBackground', {
+      configurable: true,
+      get() { return real; },
+      set(value) { real = value; real.getHandle = async () => window.__mockHandle; },
+    });
+  });
+
+  // Permission already granted: reconnect happens with no user action.
+  await page.addInitScript(() => {
+    window.__mockHandle = { name: 'shared.json', queryPermission: async () => 'granted', requestPermission: async () => 'granted' };
+  });
+  await page.goto(url);
+  await settings(page, 'Data');
+  await expect(page.locator('#file-status')).toHaveText('Linked: shared.json · up to date');
+  await expect(page.locator('#reconnect-file')).toBeHidden();
+  await expect(page.locator('#disconnect-file')).toBeVisible();
+  await page.locator('#settings-dialog [data-close]').click();
+
+  // Permission needs to be re-granted: the user gets a Reconnect button instead of silently losing the link.
+  await page.addInitScript(() => {
+    window.__mockHandle = { name: 'shared.json', queryPermission: async () => 'prompt', requestPermission: async () => 'granted' };
+  });
+  await page.reload();
+  await settings(page, 'Data');
+  await expect(page.locator('#reconnect-file')).toBeVisible();
+  await expect(page.locator('#file-status')).toContainText('needs permission again');
+  await page.locator('#reconnect-file').click();
+  await expect(page.locator('#file-status')).toHaveText('Linked: shared.json · up to date');
+  await expect(page.locator('#reconnect-file')).toBeHidden();
 });
 
 test('real JSON download round trip, confirmation and invalid import protection', async ({ page }) => {

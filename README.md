@@ -26,11 +26,12 @@ regularly.
 - Pointer drag-and-drop, touch long-press dragging, and keyboard reorder controls.
 - Light/dark/system appearance, preset or custom accents, a brief session splash,
   and reduced-motion support.
-- Device-local background images with dim and blur controls. Images are not
-  included in workspace exports.
+- Background images with dim and blur controls. Mode/dim/blur travel with the
+  workspace; the image itself stays device-local and is not included in exports.
 - Validated JSON import/export, with a backup of browser data before replacement.
 - Optional linked JSON files in browsers supporting the File System Access API.
-  File access requires permission and must be reconnected after reopening.
+  Kanbaam remembers the link and reconnects automatically once permission is
+  granted; otherwise a Reconnect button appears instead of losing the link.
 
 ## Development
 

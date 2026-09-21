@@ -12,7 +12,8 @@
  const defaultCustomAccent='#0f8b8d';
  const cardColors=['','rose','amber','lime','teal','sky','violet','slate'];
  const projectIcons=['','folder','rocket','briefcase','palette','code','book','home','heart','star','lightbulb','target','leaf','coffee','music','camera','plane','graduation'];
- const empty=()=>({version:1,projects:[],activeProjectId:null,settings:{accent:'vermilion',customAccent:defaultCustomAccent,mode:'system',motion:true}});
+ const defaultBackground=()=>({mode:'default',dim:0,blur:0});
+ const empty=()=>({version:1,projects:[],activeProjectId:null,settings:{accent:'vermilion',customAccent:defaultCustomAccent,mode:'system',motion:true,background:defaultBackground()}});
  function validate(value){
   if(!value||value.version!==1||!Array.isArray(value.projects)) throw Error('Not a Kanbaam version 1 workspace.');
   if(value.projects.length>100)throw Error('Maximum 100 projects.');
@@ -23,7 +24,15 @@
   if(value.activeProjectId!==null&&!projects.some(p=>p.id===value.activeProjectId))throw Error('Invalid active project.');
   const customAccent=settings.customAccent??defaultCustomAccent;
   if(typeof customAccent!=='string'||!/^#[0-9a-f]{6}$/i.test(customAccent))throw Error('Invalid custom accent color.');
-  return {version:1,projects,activeProjectId:projects.find(p=>p.id===value.activeProjectId)?.archived?(projects.find(p=>!p.archived)?.id??null):value.activeProjectId,settings:{accent:settings.accent,customAccent:customAccent.toLowerCase(),mode:settings.mode,motion:settings.motion}};
+  const background=backgroundFields(settings.background);
+  return {version:1,projects,activeProjectId:projects.find(p=>p.id===value.activeProjectId)?.archived?(projects.find(p=>!p.archived)?.id??null):value.activeProjectId,settings:{accent:settings.accent,customAccent:customAccent.toLowerCase(),mode:settings.mode,motion:settings.motion,background}};
+ }
+ function backgroundFields(bg){
+  const mode=bg?.mode??'default';if(mode!=='default'&&mode!=='custom')throw Error('Invalid background mode.');
+  const dim=bg?.dim??0,blur=bg?.blur??0;
+  if(!Number.isInteger(dim)||dim<0||dim>80)throw Error('Invalid background dim.');
+  if(!Number.isInteger(blur)||blur<0||blur>30)throw Error('Invalid background blur.');
+  return {mode,dim,blur};
  }
  function createdAt(value){if(value==null)return null;if(typeof value!=='string'||!Number.isFinite(Date.parse(value)))throw Error('Invalid creation date.');return new Date(value).toISOString();}
  const id=()=>globalThis.crypto.randomUUID();
