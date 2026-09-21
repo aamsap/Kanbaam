@@ -13,7 +13,7 @@
  const cardColors=['','rose','amber','lime','teal','sky','violet','slate'];
  const projectIcons=['','folder','rocket','briefcase','palette','code','book','home','heart','star','lightbulb','target','leaf','coffee','music','camera','plane','graduation'];
  const defaultBackground=()=>({mode:'default',dim:0,blur:0});
- const empty=()=>({version:1,projects:[],activeProjectId:null,settings:{accent:'vermilion',customAccent:defaultCustomAccent,mode:'system',motion:true,background:defaultBackground()}});
+ const empty=()=>({version:1,projects:[],activeProjectId:null,settings:{accent:'vermilion',customAccent:defaultCustomAccent,mode:'system',motion:true,language:'en',background:defaultBackground()}});
  function validate(value){
   if(!value||value.version!==1||!Array.isArray(value.projects)) throw Error('Not a Kanbaam version 1 workspace.');
   if(value.projects.length>100)throw Error('Maximum 100 projects.');
@@ -25,7 +25,8 @@
   const customAccent=settings.customAccent??defaultCustomAccent;
   if(typeof customAccent!=='string'||!/^#[0-9a-f]{6}$/i.test(customAccent))throw Error('Invalid custom accent color.');
   const background=backgroundFields(settings.background);
-  return {version:1,projects,activeProjectId:projects.find(p=>p.id===value.activeProjectId)?.archived?(projects.find(p=>!p.archived)?.id??null):value.activeProjectId,settings:{accent:settings.accent,customAccent:customAccent.toLowerCase(),mode:settings.mode,motion:settings.motion,background}};
+  const language=settings.language??'en';if(language!=='en'&&language!=='id')throw Error('Invalid language setting.');
+  return {version:1,projects,activeProjectId:projects.find(p=>p.id===value.activeProjectId)?.archived?(projects.find(p=>!p.archived)?.id??null):value.activeProjectId,settings:{accent:settings.accent,customAccent:customAccent.toLowerCase(),mode:settings.mode,motion:settings.motion,language,background}};
  }
  function backgroundFields(bg){
   const mode=bg?.mode??'default';if(mode!=='default'&&mode!=='custom')throw Error('Invalid background mode.');

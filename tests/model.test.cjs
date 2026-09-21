@@ -76,6 +76,12 @@ test('custom accent color validates as a hex color and defaults for older worksp
  assert.match(M.validate(legacy).settings.customAccent,/^#[0-9a-f]{6}$/);
  for(const bad of ['red','#fff','#12345g','url(x)',42]){const b=structuredClone(s);b.settings.customAccent=bad;assert.throws(()=>M.validate(b));}
 });
+test('language setting defaults to English and accepts Indonesian',()=>{
+ const s=M.empty();assert.equal(M.validate(s).settings.language,'en');
+ s.settings.language='id';assert.equal(M.validate(s).settings.language,'id');
+ const legacy=structuredClone(s);delete legacy.settings.language;assert.equal(M.validate(legacy).settings.language,'en');
+ const bad=structuredClone(s);bad.settings.language='fr';assert.throws(()=>M.validate(bad));
+});
 test('background preferences default, validate, and travel through the workspace so a linked file carries them',()=>{
  const s=M.empty();
  assert.deepEqual(s.settings.background,{mode:'default',dim:0,blur:0});

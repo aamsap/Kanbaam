@@ -221,6 +221,7 @@ h1 { margin: 0; font-size: 25px; font-weight: 650; line-height: 1.3; }
 #project-subtitle { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
 #project-description { margin: 4px 0 0; max-width: 70ch; overflow: hidden; color: var(--muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .heading-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.language-toggle { width: 38px; min-width: 38px; height: 36px; padding: 0; font-size: 12px; font-weight: 700; }
 .theme-toggle .icon { width: 19px; height: 19px; }
 .board-tools #add-task, .board-tools #add-category { flex-shrink: 0; }
 .board-tools #add-category { order: 3; margin-left: auto; }

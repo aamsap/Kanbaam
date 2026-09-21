@@ -187,7 +187,7 @@ test('category templates can extend or replace workflows without deleting cards'
 test('settings tabs are keyboard accessible and fit narrow screens', async ({ page }) => {
   await addProject(page, 'Settings coverage');
   await page.setViewportSize({width:320,height:740});
-  await settings(page);
+  await page.locator('#settings-open').click();
   await page.getByRole('tab',{name:'Appearance',exact:true}).focus();
   await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('tab',{name:'Background',exact:true})).toBeFocused();
@@ -234,7 +234,7 @@ test('starts offline, creates browser JSON automatically, project lifecycle pers
 
 test('header toggle switches light and dark, and the mobile project menu edits the current project', async ({ page }) => {
   await page.locator('#sample-project').click();
-  await settings(page);
+  await page.locator('#settings-open').click();
   await page.getByRole('combobox', { name: 'Color mode', exact: true }).selectOption('light');
   await page.locator('#settings-dialog [data-close]').click();
   await page.getByRole('button', { name: 'Switch to dark mode', exact: true }).click();
@@ -247,6 +247,22 @@ test('header toggle switches light and dark, and the mobile project menu edits t
   await page.getByRole('button', { name: 'Project options', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Edit project' }).click();
   await expect(page.getByLabel('Project name', { exact: true })).toHaveValue('A fresh start · sample');
+});
+
+test('language toggle switches the core interface to Indonesian and persists', async ({ page }) => {
+  await page.locator('#sample-project').click();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await page.locator('#language-toggle').click();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'id');
+  await expect(page.locator('#language-toggle')).toHaveText('EN');
+  await expect(page.locator('#add-task')).toHaveAttribute('aria-label', 'Tambah tugas');
+  await expect(page.locator('#add-category')).toHaveAttribute('aria-label', 'Kategori');
+  await page.locator('#settings-open').click();
+  await expect(page.getByRole('tab', { name: 'Tampilan', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('Escape');
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'id');
+  await expect(page.locator('#add-task')).toHaveAttribute('aria-label', 'Tambah tugas');
 });
 
 test('custom accent color re-themes the app, stays readable for any pick, and persists', async ({ page }) => {
