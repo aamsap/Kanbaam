@@ -11,7 +11,7 @@ test.beforeEach(async ({ page }) => {
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(url);
 });
-test.afterEach(() => expect(errors).toEqual([]));
+test.afterEach(() => { if (errors) expect(errors).toEqual([]); });
 async function addProject(page, name) {
   await page.getByRole('button', { name: 'Add project', exact: true }).click();
   await page.getByLabel('Project name', { exact: true }).fill(name);
@@ -122,6 +122,21 @@ test('projects can be reordered by dragging in the sidebar and persist after rel
   expect(await projectNames(page)).toEqual(['Gamma', 'Alpha', 'Beta']);
 });
 
+test('keyboard project movement persists and announces position', async ({page}) => {
+  await addProject(page,'Alpha');await addProject(page,'Beta');await addProject(page,'Gamma');
+  await page.getByRole('button',{name:'Move Gamma up'}).focus();
+  await page.keyboard.press('Enter');
+  expect(await projectNames(page)).toEqual(['Alpha','Gamma','Beta']);
+  await expect(page.locator('#announcement')).toContainText('Gamma');
+  await expect(page.locator('#announcement')).toContainText('2 of 3');
+  await expect(page.getByRole('button',{name:'Move Gamma up'})).toBeFocused();
+  await page.getByRole('button',{name:'Move Gamma up'}).press('Enter');
+  await expect(page.getByRole('button',{name:'Move Gamma up'})).toBeDisabled();
+  await page.reload();expect(await projectNames(page)).toEqual(['Gamma','Alpha','Beta']);
+  await page.getByRole('button',{name:'Move Gamma down'}).press('Enter');
+  expect(await projectNames(page)).toEqual(['Alpha','Gamma','Beta']);
+});
+
 test('dynamic categories support tasks, editing, ordering, safe removal and persistence', async ({ page }) => {
   await addProject(page, 'Custom workflow');
   await expect(page.locator('.lane-heading h2')).toHaveText(['Backlog','In progress','Review','Done']);
@@ -174,6 +189,7 @@ test('category templates can extend or replace workflows without deleting cards'
   await settings(page, 'Categories');
   await page.locator('#category-template').selectOption('software');
   await page.locator('#replace-template').click();
+  await page.locator('#confirm-dialog [value=confirm]').click();
   await page.keyboard.press('Escape');
   await expect(page.locator('.lane-heading h2')).toHaveText(['Backlog','Ready','In Development','Code Review','QA','Deployed']);
   await expect(page.locator('.lane').nth(0).locator('.card-title')).toHaveText(['Backlog card']);
@@ -182,6 +198,336 @@ test('category templates can extend or replace workflows without deleting cards'
   await page.reload();
   await expect(page.locator('.lane-heading h2')).toHaveText(['Backlog','Ready','In Development','Code Review','QA','Deployed']);
   await expect(page.locator('.task-card')).toHaveCount(3);
+});
+
+test('template replacement previews exact task mappings, cancels safely, and can be undone', async ({page}) => {
+  await addProject(page,'Preview board');
+  await addTask(page,'Queued','backlog');
+  await addTask(page,'Working','progress');
+  await addTask(page,'Finished','done');
+  await settings(page,'Categories');
+  await page.locator('#category-template').selectOption('simple');
+  await page.locator('#replace-template').click();
+  await expect(page.locator('#confirm-dialog')).toBeVisible();
+  await expect(page.locator('#confirm-message')).toContainText('Backlog (1) → To Do');
+  await expect(page.locator('#confirm-message')).toContainText('In progress (1) → Doing');
+  await expect(page.locator('#confirm-message')).toContainText('Done (1) → Done');
+  await page.locator('#confirm-dialog [value=cancel]').click();
+  await expect(page.locator('#category-list .category-row')).toHaveCount(4);
+  await page.locator('#replace-template').click();
+  await page.locator('#confirm-dialog [value=confirm]').click();
+  await expect(page.locator('#category-list .category-row')).toHaveCount(3);
+  await expect(page.locator('#undo-template')).toBeVisible();
+  await page.locator('#undo-template').click();
+  await expect(page.locator('#category-list .category-row')).toHaveCount(4);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.lane[data-status=progress] .card-title')).toHaveText('Working');
+  await expect(page.locator('.lane[data-status=done] .card-title')).toHaveText('Finished');
+});
+
+test('Indonesian translates settings, forms, menus, controls and announcements',async({page})=>{
+  await addProject(page,'Bahasa board');await addTask(page,'Contoh');
+  await page.locator('#language-toggle').click();
+  await expect(page.locator('#project-form label').first()).toContainText('Nama proyek');
+  await expect(page.locator('#task-form [name=title]')).toHaveAttribute('placeholder','Apa yang perlu dilakukan?');
+  await expect(page.locator('#menu-archive')).toHaveText('Arsipkan proyek');
+  await expect(page.locator('#panel-data')).toContainText('Ekspor JSON');
+  await expect(page.locator('#category-form')).toContainText('Nama kategori');
+  await expect(page.getByRole('button',{name:'Pindahkan Bahasa board naik'})).toBeDisabled();
+  await page.locator('#settings-open').click();await page.getByRole('tab',{name:'Kategori'}).click();
+  await page.locator('#replace-template').click();
+  await expect(page.locator('#confirm-title')).toHaveText('Ganti kategori?');
+  await page.locator('#confirm-dialog [value=cancel]').click();
+  await page.keyboard.press('Escape');
+  await page.locator('.task-card .card-open').click();
+  await expect(page.locator('#view-description')).toHaveText('A real local task');
+  await expect(page.locator('#view-priority')).toHaveText('Sedang');
+});
+
+test('task edits after template replacement invalidate Undo without changing the edits',async({page})=>{
+  await addProject(page,'Board');
+  await settings(page,'Categories');
+  await page.locator('#category-template').selectOption('simple');
+  await page.locator('#replace-template').click();
+  await page.locator('#confirm-button').click();
+  await page.locator('#settings-dialog [data-close]').click();
+  await addTask(page,'New task','doing');
+  await page.locator('#add-category').click();
+  await expect(page.locator('#undo-template')).toBeHidden();
+  const state=await page.evaluate(()=>window.Kanbaam.getState());
+  expect(state.projects[0].tasks[0].status).toBe('doing');
+  expect(await page.evaluate(()=>{try{window.KanbaamModel.validate(window.Kanbaam.getState());return true;}catch{return false;}})).toBe(true);
+  await page.reload();
+  await expect(page.locator('.card-title')).toHaveText('New task');
+});
+test('category edits after template replacement invalidate Undo',async({page})=>{
+ await addProject(page,'Board');await settings(page,'Categories');
+ await page.locator('#category-template').selectOption('simple');await page.locator('#replace-template').click();await page.locator('#confirm-button').click();
+ await expect(page.locator('#undo-template')).toBeVisible();
+ await page.locator('#settings-add-category').click();await page.locator('#category-form [name=name]').fill('Custom');await page.locator('#category-form button[type=submit]').click();
+ await expect(page.locator('#undo-template')).toBeHidden();
+ await expect(page.locator('#category-list')).toContainText('Custom');
+});
+test('importing the same project ID discards stale template Undo',async({page})=>{
+ await addProject(page,'Board');const imported=await page.evaluate(()=>Kanbaam.getState());
+ imported.projects[0].categories[0].name='Imported backlog';
+ await settings(page,'Categories');await page.locator('#category-template').selectOption('simple');await page.locator('#replace-template').click();await page.locator('#confirm-button').click();
+ await page.locator('#tab-data').click();await page.locator('#import-file').setInputFiles({name:'import.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(imported))});
+ await page.locator('#confirm-button').click();await page.locator('#tab-categories').click();
+ await expect(page.locator('#undo-template')).toBeHidden();
+ await expect(page.locator('#category-list')).toContainText('Imported backlog');
+});
+test('stale tab import requires explicit conflict recovery before replacing newer data',async({page,context})=>{
+ await addProject(page,'Original');const imported=await page.evaluate(()=>Kanbaam.getState());imported.projects[0].name='Imported';
+ const second=await context.newPage();await second.goto(url);await addProject(second,'Newer tab');
+ await settings(page,'Data');await page.locator('#import-file').setInputFiles({name:'import.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(imported))});
+ await expect(page.locator('#confirm-message')).toContainText(/another tab|newer/i);
+ await page.locator('#confirm-button').click();
+ await expect(page.locator('#notice')).toContainText(/another tab|changed/i);
+ expect((await second.evaluate(()=>Kanbaam.getState())).projects.map(p=>p.name)).toContain('Newer tab');
+ expect((await page.evaluate(k=>JSON.parse(localStorage.getItem(k)),key)).projects.map(p=>p.name)).toContain('Newer tab');
+ expect((await page.evaluate(()=>Kanbaam.getState())).projects.map(p=>p.name)).not.toContain('Imported');
+ await second.close();
+});
+test('import conflict without storage event keeps a visible recovery warning',async({page})=>{
+ await addProject(page,'Local');const imported=await page.evaluate(()=>Kanbaam.getState());
+ await page.evaluate(k=>{const next=Kanbaam.getState();next.projects[0].name='Newer';localStorage.setItem(k,JSON.stringify(next));},key);
+ await settings(page,'Data');await page.locator('#import-file').setInputFiles({name:'local.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(imported))});
+ await expect(page.locator('#confirm-message')).toContainText('newer');await page.locator('#confirm-button').click();
+ await expect(page.locator('#notice')).toContainText(/export.*reload/i);
+ expect((await page.evaluate(k=>JSON.parse(localStorage.getItem(k)),key)).projects[0].name).toBe('Newer');
+});
+test('raw change during import confirmation aborts import and warns to export',async({page})=>{
+ await addProject(page,'Local');const imported=await page.evaluate(()=>Kanbaam.getState());imported.projects[0].name='Imported';
+ await settings(page,'Data');await page.locator('#import-file').setInputFiles({name:'import.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(imported))});
+ await expect(page.locator('#confirm-title')).toHaveText('Replace workspace?');
+ await page.evaluate(k=>{const next=Kanbaam.getState();next.projects[0].name='Newer';localStorage.setItem(k,JSON.stringify(next));},key);
+ await page.locator('#confirm-button').click();
+ await expect(page.locator('#save-status')).toContainText('Not saved');
+ await expect(page.locator('#notice')).toContainText(/export.*reload/i);
+ expect((await page.evaluate(k=>JSON.parse(localStorage.getItem(k)),key)).projects.map(p=>p.name)).toContain('Newer');
+ expect((await page.evaluate(()=>Kanbaam.getState())).projects.map(p=>p.name)).not.toContain('Imported');
+});
+test('corrupt browser import recovers with backup after explicit confirmation',async({page})=>{
+ const imported=await page.evaluate(()=>Kanbaam.getState());
+ await page.evaluate(k=>localStorage.setItem(k,'{broken'),key);await page.reload();
+ await settings(page,'Data');await page.locator('#import-file').setInputFiles({name:'recovery.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(imported))});
+ await expect(page.locator('#confirm-message')).toContainText(/backed up/i);
+ await page.locator('#confirm-button').click();
+ await expect(page.locator('#notice')).toBeHidden();
+ expect(await page.evaluate(k=>localStorage.getItem(k+'.backup'),key)).toBe('{broken');
+ await page.locator('#settings-dialog [data-close]').click();
+ await addProject(page,'Recovered');await expect(page.locator('#save-status')).toContainText('Saved');
+});
+
+test('Indonesian category and template display translates defaults without changing stored names',async({page})=>{
+  await addProject(page,'Board');
+  await page.locator('#language-toggle').click();
+  await page.locator('#add-category').click();
+  await expect(page.locator('#category-list .category-row').first()).toContainText('Daftar tugas');
+  await expect(page.locator('#category-list .category-row').first()).toContainText('tugas');
+  await expect(page.locator('#category-list .category-row').last()).toContainText('Selesai');
+  await expect(page.locator('#category-template')).toContainText('Pengembangan perangkat lunak');
+  await page.locator('#category-template').selectOption('software');
+  await expect(page.locator('#template-preview')).toContainText('Tinjauan kode');
+  await expect(page.locator('#category-list .category-row').first().locator('button').first()).toHaveAttribute('aria-label','Pindahkan Daftar tugas ke kiri');
+  await page.locator('#settings-dialog [data-close]').click();
+  expect((await page.evaluate(()=>window.Kanbaam.getState())).projects[0].categories[0].name).toBe('Backlog');
+  await page.locator('#add-task').click();
+  await expect(page.locator('#task-form [name=status]')).toContainText('Daftar tugas');
+  await page.locator('#task-dialog [data-close]').first().click();
+});
+
+test('Indonesian localizes validation, background, file and confirmation messages',async({page})=>{
+  await addProject(page,'Papan');await page.locator('#language-toggle').click();
+  await page.locator('#add-task').click();
+  await page.locator('#task-form [name=title]').fill('Uji');
+  await page.locator('#task-form [name=link]').fill('ftp://example.com');
+  await page.locator('#task-form button[type=submit]').click();
+  await expect(page.locator('#task-form .form-error')).toContainText('http dan https');
+  await page.locator('#task-dialog [data-close]').first().click();
+  await page.locator('#settings-open').click();await page.locator('#tab-background').click();
+  await page.locator('#bg-file').setInputFiles({name:'bad.txt',mimeType:'text/plain',buffer:Buffer.from('invalid')});
+  await expect(page.locator('#bg-status')).toContainText('Pilih gambar');
+  await page.locator('#tab-data').click();
+  await expect(page.locator('#file-capability')).not.toContainText('This browser');
+  await page.locator('#export-backup').click();
+  await expect(page.locator('#file-status')).toContainText('Belum ada cadangan');
+  await page.locator('#settings-dialog [data-close]').click();
+  await page.locator('#add-task').click();await page.locator('#task-form [name=title]').fill('Hapus saya');await page.locator('#task-form button[type=submit]').click();
+  await page.locator('.card-open').click();await page.locator('#view-delete').click();
+  await expect(page.locator('#confirm-title')).toHaveText('Hapus tugas?');
+  await expect(page.locator('#confirm-message')).toContainText('tidak dapat dibatalkan');
+});
+
+test('Indonesian scan covers metadata, controls and localized default data',async({page})=>{
+  await addProject(page,'Papan');await addTask(page,'Tugas');await page.locator('#language-toggle').click();
+  const english=/\b(?:Backlog|In progress|Review|Done|Priority|Link|Due|Project options|Move |tasks|Completed|Workspace|Welcome to|Enter workspace|a little more done)\b/i;
+  const surfaced=await page.evaluate(()=>[...document.querySelectorAll('body *')].filter(n=>!n.children.length&&!n.closest('svg,script,style')).flatMap(n=>[n.textContent,n.getAttribute('aria-label'),n.getAttribute('title'),n.getAttribute('placeholder')].filter(Boolean)));
+  expect(surfaced.filter(x=>english.test(x))).toEqual([]);
+  await page.locator('.card-open').first().click();
+  await expect(page.locator('#view-dialog')).not.toContainText('Priority');
+  await expect(page.locator('#view-dialog')).not.toContainText('Backlog');
+});
+
+test('Indonesian linked-file status and import confirmation preserve file names',async({page})=>{
+  await page.evaluate(k=>{const s=JSON.parse(localStorage.getItem(k));s.settings.language='id';localStorage.setItem(k,JSON.stringify(s));},key);
+  await page.addInitScript(()=>{let real;Object.defineProperty(window,'KanbaamBackground',{configurable:true,get:()=>real,set:value=>{real=value;real.getHandle=async()=>({name:'arsip.json',queryPermission:async()=> 'granted',getFile:async()=>({size:localStorage.getItem('kanbaam.workspace.v1').length,text:async()=>localStorage.getItem('kanbaam.workspace.v1')})});}});});
+  await page.reload();await page.locator('#settings-open').click();await page.locator('#tab-data').click();
+  await expect(page.locator('#file-status')).toHaveText('Tertaut: arsip.json · sudah terbaru');
+  const raw=await page.evaluate(k=>localStorage.getItem(k),key);
+  await page.locator('#import-file').setInputFiles({name:'contoh.json',mimeType:'application/json',buffer:Buffer.from(raw)});
+  await expect(page.locator('#confirm-title')).toHaveText('Ganti ruang kerja?');
+  await expect(page.locator('#confirm-message')).toContainText('contoh.json');
+  await expect(page.locator('#confirm-message')).toContainText('dicadangkan');
+});
+
+test('Indonesian shows localized browser conflict and preserves edits',async({page,context})=>{
+  await addProject(page,'Lokal');await page.locator('#language-toggle').click();
+  const second=await context.newPage();await second.goto(url);await second.locator('#add-project').click();await second.locator('#project-name').fill('Lain');await second.locator('#project-form button[type=submit]').click();
+  await expect(page.locator('#notice')).toContainText('tab lain');
+  await expect(page.locator('#notice')).not.toContainText('Browser workspace changed');
+  await page.locator('#add-project').click();await page.locator('#project-name').fill('Tidak tersimpan');await page.locator('#project-form button[type=submit]').click();
+  await expect(page.locator('#notice')).toContainText('hanya di memori');
+  await second.close();
+});
+
+test('Indonesian sample board is authored in Indonesian without changing stable statuses',async({page})=>{
+  await page.locator('#language-toggle').click();await page.locator('#sample-project').click();
+  await expect(page.locator('#project-title')).toContainText('contoh');
+  await expect(page.locator('.card-title').first()).not.toContainText('Make this board your own');
+  const data=await page.evaluate(()=>window.Kanbaam.getState().projects[0]);
+  expect(data.tasks.map(task=>task.status)).toEqual(['backlog','backlog','progress','review','done']);
+});
+
+test('Indonesian localizes uncommon file and background notices and card controls',async({page})=>{
+  await addProject(page,'Papan');await addTask(page,'Tugas');await page.locator('#language-toggle').click();
+  await expect(page.locator('.card-link-dot')).toHaveCount(0);
+  await expect(page.locator('.task-card .card-controls button').first()).toHaveAttribute('aria-label','Sunting tugas: Tugas');
+  await page.locator('#settings-open').click();await page.locator('#tab-background').click();
+  const png=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=8;c.height=8;return c.toDataURL().split(',')[1];});
+  await page.locator('#bg-file').setInputFiles({name:'foto.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
+  await expect(page.locator('#bg-status')).toContainText('perangkat ini');
+  await page.locator('#bg-remove').click();await expect(page.locator('#bg-status')).toHaveText('Gambar kustom dihapus.');
+  await expect(page.locator('#splash')).toHaveCount(0);
+});
+
+test('Indonesian localizes accessibility labels, card colors and linked-file recovery',async({page})=>{
+  await addProject(page,'Papan');await page.locator('#language-toggle').click();
+  await expect(page.locator('.wordmark')).toHaveAttribute('aria-label','Beranda Kanbaam');
+  await expect(page.locator('#projects')).toHaveAttribute('aria-label','Proyek');
+  await expect(page.locator('#projects .project-menu-button')).toHaveAttribute('aria-label','Opsi proyek untuk Papan');
+  await page.locator('#add-task').click();
+  await expect(page.locator('#card-color-options input[value=rose]')).toHaveAttribute('aria-label','Merah mawar');
+  await expect(page.locator('#task-form [name=tags]')).toHaveAttribute('placeholder','Konten, Desain, Proyek AI');
+  await page.locator('#task-dialog [data-close]').first().click();
+  await page.locator('#add-category').click();
+  await expect(page.locator('#category-list .category-row').last()).not.toContainText('Completed');
+});
+
+test('Indonesian never translates user-authored names matching interface words',async({page})=>{
+  await addProject(page,'Forest');await addTask(page,'Rose');await page.locator('#language-toggle').click();
+  await expect(page.locator('#project-title')).toHaveText('Forest');
+  await expect(page.locator('.project-button')).toHaveAttribute('title','Forest');
+  await expect(page.locator('.card-title')).toHaveText('Rose');
+  await expect(page.locator('.card-open')).toHaveAttribute('aria-label','Lihat tugas: Rose');
+  await page.locator('#add-category').click();await page.locator('#settings-add-category').click();
+  await page.locator('#category-form [name=name]').fill('Amber');await page.locator('#category-form button[type=submit]').click();
+  await expect(page.locator('#category-list .category-row').last().locator('strong')).toHaveText('Amber');
+});
+
+test('Indonesian template warning displays translated built-in categories but keeps stored IDs',async({page})=>{
+  await addProject(page,'Papan');await addTask(page,'Tugas');await page.locator('#language-toggle').click();
+  await page.locator('#add-category').click();await page.locator('#category-template').selectOption('simple');await page.locator('#replace-template').click();
+  await expect(page.locator('#confirm-message')).toContainText('Daftar tugas');
+  await expect(page.locator('#confirm-message')).not.toContainText('Backlog');
+  await expect(page.locator('#confirm-message')).not.toContainText('In progress');
+  await page.locator('#confirm-button').click();
+  expect((await page.evaluate(()=>window.Kanbaam.getState())).projects[0].categories[0].name).toBe('To Do');
+});
+
+test('Indonesian reconnect permission notice names the linked file',async({page})=>{
+  await page.evaluate(k=>{const s=JSON.parse(localStorage.getItem(k));s.settings.language='id';localStorage.setItem(k,JSON.stringify(s));},key);
+  await page.addInitScript(()=>{let real;Object.defineProperty(window,'KanbaamBackground',{configurable:true,get:()=>real,set:value=>{real=value;real.getHandle=async()=>({name:'papan.json',queryPermission:async()=> 'prompt',requestPermission:async()=> 'denied'});}});});
+  await page.reload();await page.locator('#settings-open').click();await page.locator('#tab-data').click();
+  await expect(page.locator('#file-status')).toContainText('papan.json');
+  await expect(page.locator('#file-status')).toContainText('izin');
+  await expect(page.locator('#file-status')).not.toContainText('needs permission again');
+  await page.locator('#reconnect-file').click();
+  await expect(page.locator('#file-status')).toContainText('Izin tidak diberikan');
+});
+
+test('Indonesian divergent linked file explains safe recovery without English',async({page})=>{
+  await addProject(page,'Papan');await page.locator('#language-toggle').click();
+  await page.addInitScript(()=>{let real;Object.defineProperty(window,'KanbaamBackground',{configurable:true,get:()=>real,set:value=>{real=value;real.getHandle=async()=>({name:'lain.json',queryPermission:async()=> 'granted',getFile:async()=>{const state=JSON.parse(localStorage.getItem('kanbaam.workspace.v1'));state.projects[0].name='Berbeda';const raw=JSON.stringify(state);return {size:raw.length,text:async()=>raw};}});}});});
+  await page.reload();await page.locator('#settings-open').click();await page.locator('#tab-data').click();
+  await expect(page.locator('#file-status')).toContainText('lain.json');
+  await expect(page.locator('#file-status')).toContainText('berbeda');
+  await expect(page.locator('#file-status')).not.toContainText('differs from this browser');
+});
+
+test('Indonesian invalid JSON import gives a localized, safe error',async({page})=>{
+  await addProject(page,'Papan');await page.locator('#language-toggle').click();await page.locator('#settings-open').click();await page.locator('#tab-data').click();
+  await page.locator('#import-file').setInputFiles({name:'rusak.json',mimeType:'application/json',buffer:Buffer.from('{rusak')});
+  await expect(page.locator('#file-status')).toContainText('JSON tidak valid');
+  await expect(page.locator('#notice')).not.toContainText('Expected property name');
+  expect((await page.evaluate(()=>window.Kanbaam.getState())).projects[0].name).toBe('Papan');
+});
+
+test('Indonesian archived project controls and filtered counts are localized',async({page})=>{
+  await addProject(page,'Papan');await addTask(page,'Tugas');await page.locator('#language-toggle').click();
+  await page.locator('#search').fill('tidak ada');await expect(page.locator('#task-total')).toHaveText('0 dari 1');
+  await page.locator('#search').fill('');
+  await page.locator('#projects .project-menu-button').click();await page.locator('#menu-archive').click();
+  await page.locator('#settings-open').click();await page.locator('#tab-data').click();
+  await expect(page.locator('#archived-projects')).toContainText('1 tugas');
+  await expect(page.locator('#archived-projects button')).toHaveText('Pulihkan');
+});
+
+test('Indonesian corrupt browser data stays untouched with localized warning',async({page})=>{
+  await page.evaluate(k=>localStorage.setItem(k,'{rusak'),key);await page.reload();
+  await page.locator('#language-toggle').click();
+  await expect(page.locator('#notice')).toContainText('Data browser asli dilindungi');
+  await expect(page.locator('#notice')).not.toContainText('Expected property name');
+  expect(await page.evaluate(k=>localStorage.getItem(k),key)).toBe('{rusak');
+});
+
+test('Indonesian due dates use Indonesian month names on cards',async({page})=>{
+  await addProject(page,'Papan');await page.locator('#add-task').click();await page.locator('#task-form [name=title]').fill('Jadwal');await page.locator('#task-form [name=due]').fill('2027-08-17');await page.locator('#task-form button[type=submit]').click();
+  await page.locator('#language-toggle').click();
+  await expect(page.locator('.task-card .due')).toContainText('Agu');
+  await expect(page.locator('.task-card .due')).toHaveAttribute('title','Tenggat 2027-08-17');
+});
+
+test('Indonesian scan catches untranslated dynamic labels and dialog messages',async({page})=>{
+  await addProject(page,'Papan');await addTask(page,'Contoh');await page.locator('#language-toggle').click();
+  await page.locator('#add-category').click();
+  const labels=await page.locator('#settings-dialog').evaluate(el=>[...el.querySelectorAll('button, label, legend, h3, .fine-print')].map(n=>n.textContent.trim()).filter(Boolean));
+  expect(labels.join(' ')).not.toMatch(/(?:Add category|Category template|Save category|Archived projects|Choose image|No file linked)/);
+  await page.locator('#settings-dialog [data-close]').click();
+  const dynamic=await page.locator('#board').evaluate(el=>[...el.querySelectorAll('button,select')].flatMap(n=>[n.getAttribute('aria-label')||'',n.title||'',...([...n.options||[]].map(x=>x.text))]));
+  expect(dynamic.join(' ')).not.toMatch(/(?:Add task to|Sort |Manual order|View task:|Edit task:|Priority: high first)/);
+  await page.locator('#add-category').click();await page.locator('#settings-add-category').click();
+  await expect(page.locator('#category-title')).toHaveText('Kategori baru');
+});
+
+test('Indonesian confirmation and category alerts contain no English copy',async({page})=>{
+  await addProject(page,'Papan');await addTask(page,'Contoh');await page.locator('#language-toggle').click();
+  await page.locator('#add-category').click();await page.locator('#replace-template').click();
+  await expect(page.locator('#confirm-message')).toContainText('tugas');
+  await expect(page.locator('#confirm-message')).not.toContainText('tasks will be remapped');
+  await page.locator('#confirm-dialog [value=cancel]').click();
+  await page.locator('#category-list .category-row').first().getByRole('button',{name:/Hapus kategori/}).click();
+  await expect(page.locator('#remove-category-message')).toContainText('tugas');
+});
+
+test('Indonesian delete confirmation localizes title, warning and action',async({page})=>{
+  await addProject(page,'Papan');await page.locator('#language-toggle').click();
+  await page.getByRole('button',{name:'Opsi proyek untuk Papan'}).click();
+  await page.getByRole('menuitem',{name:'Hapus proyek'}).click();
+  await expect(page.locator('#confirm-title')).toHaveText('Hapus proyek?');
+  await expect(page.locator('#confirm-message')).toContainText('dicadangkan');
+  await expect(page.locator('#confirm-button')).toHaveText('Hapus proyek');
 });
 
 test('settings tabs are keyboard accessible and fit narrow screens', async ({ page }) => {
@@ -610,7 +956,7 @@ test('a linked file reconnects automatically when permission is already granted,
 
   // Permission already granted: reconnect happens with no user action.
   await page.addInitScript(() => {
-    window.__mockHandle = { name: 'shared.json', queryPermission: async () => 'granted', requestPermission: async () => 'granted' };
+    window.__mockHandle = { name: 'shared.json', queryPermission: async () => 'granted', requestPermission: async () => 'granted',getFile:async()=>({size:localStorage.getItem('kanbaam.workspace.v1').length,text:async()=>localStorage.getItem('kanbaam.workspace.v1')}) };
   });
   await page.goto(url);
   await settings(page, 'Data');
@@ -621,7 +967,7 @@ test('a linked file reconnects automatically when permission is already granted,
 
   // Permission needs to be re-granted: the user gets a Reconnect button instead of silently losing the link.
   await page.addInitScript(() => {
-    window.__mockHandle = { name: 'shared.json', queryPermission: async () => 'prompt', requestPermission: async () => 'granted' };
+    window.__mockHandle = { name: 'shared.json', queryPermission: async () => 'prompt', requestPermission: async () => 'granted',getFile:async()=>({size:localStorage.getItem('kanbaam.workspace.v1').length,text:async()=>localStorage.getItem('kanbaam.workspace.v1')}) };
   });
   await page.reload();
   await settings(page, 'Data');
@@ -661,6 +1007,62 @@ test('real JSON download round trip, confirmation and invalid import protection'
   await page.locator('#settings-dialog [data-close]').click();
   await expect(page.locator('#notice')).toBeVisible();
   await expect(page.locator('.task-card img')).toHaveCount(0);
+});
+
+test('another tab change pauses browser and linked-file saves while preserving local edits for export',async({page,context})=>{
+ await addProject(page,'Local');
+ const second=await context.newPage();await second.goto(url);await addProject(second,'Other tab');
+ await expect(page.locator('#notice')).toContainText(/another tab|changed/i);
+ await addProject(page,'Unsaved local');
+ await expect(page.locator('#notice')).toContainText(/another tab|changed/i);
+ expect((await page.evaluate(()=>Kanbaam.getState().projects.map(p=>p.name)))).toContain('Unsaved local');
+ expect((await second.evaluate(()=>Kanbaam.getState().projects.map(p=>p.name)))).toContain('Other tab');
+ await expect(page.locator('#save-status')).toContainText('Not saved');
+ await settings(page,'Data');const event=page.waitForEvent('download');await page.locator('#export').click();
+ expect(JSON.parse(await fs.readFile(await (await event).path(),'utf8')).projects.map(p=>p.name)).toContain('Unsaved local');
+ await second.close();
+});
+
+test('corrupt browser data does not reconnect or write its linked file',async({page})=>{
+ await page.addInitScript(()=>{
+  let bg;Object.defineProperty(window,'KanbaamBackground',{configurable:true,get:()=>bg,set:value=>{
+   bg=value;bg.getHandle=async()=>({name:'linked.json',queryPermission:async()=> 'granted',getFile:async()=>({size:2,text:async()=> '{}'}),createWritable:async()=>{window.__writes=(window.__writes||0)+1;return {write:async()=>{},close:async()=>{}};}});
+  }});
+ });
+ await page.evaluate(k=>localStorage.setItem(k,'{broken'),key);await page.reload();
+ await expect(page.locator('#notice')).toContainText('Original data is untouched');
+ await addProject(page,'Memory only');
+ expect(await page.evaluate(()=>window.__writes||0)).toBe(0);
+ await expect(page.locator('#file-status')).not.toContainText('up to date');
+});
+
+test('reconnect refuses divergent file, preserves browser edits and offers manual relink',async({page})=>{
+ await addProject(page,'Browser edits');
+ await page.addInitScript(()=>{
+  let bg;Object.defineProperty(window,'KanbaamBackground',{configurable:true,get:()=>bg,set:value=>{bg=value;bg.getHandle=async()=>window.__handle;}});
+  window.__handle={name:'linked.json',queryPermission:async()=> 'granted',getFile:async()=>({size:window.__raw.length,text:async()=>window.__raw}),createWritable:async()=>{window.__writes++;return {write:async text=>{window.__raw=text;},close:async()=>{}};}};
+  window.__raw=JSON.stringify({...JSON.parse(localStorage.getItem('kanbaam.workspace.v1')),projects:[],activeProjectId:null});window.__writes=0;
+ });
+ await page.reload();await expect(page.locator('#file-status')).toContainText(/differs|relink/i);
+ await addProject(page,'More browser edits');expect(await page.evaluate(()=>window.__writes)).toBe(0);
+ expect(await page.evaluate(()=>Kanbaam.getState().projects.map(p=>p.name))).toContain('More browser edits');
+});
+
+test('linked file changed externally stays untouched after a browser save and shows manual recovery',async({page})=>{
+ await addProject(page,'Base');
+ await page.addInitScript(()=>{
+  let bg;Object.defineProperty(window,'KanbaamBackground',{configurable:true,get:()=>bg,set:value=>{bg=value;bg.getHandle=async()=>window.__handle;}});
+  window.__raw=localStorage.getItem('kanbaam.workspace.v1');window.__writes=0;
+  window.__handle={name:'linked.json',queryPermission:async()=> 'granted',getFile:async()=>({size:new Blob([window.__raw]).size,text:async()=>window.__raw}),createWritable:async()=>{window.__writes++;return {write:async raw=>{window.__raw=raw;},close:async()=>{}};}};
+ });
+ await page.reload();await expect(page.locator('#file-status')).toContainText('up to date');
+ await page.evaluate(()=>window.__raw='external edit');
+ await addProject(page,'Browser only');
+ await expect(page.locator('#file-status')).toContainText('changed outside Kanbaam');
+ await expect(page.locator('#retry-file')).toBeHidden();
+ expect(await page.evaluate(()=>window.__raw)).toBe('external edit');
+ expect(await page.evaluate(()=>window.__writes)).toBe(0);
+ expect(await page.evaluate(()=>Kanbaam.getState().projects.map(p=>p.name))).toContain('Browser only');
 });
 
 test('corruption is preserved and blocked persistence is clearly announced', async ({ page }) => {

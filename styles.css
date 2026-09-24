@@ -260,8 +260,8 @@ h1 { margin: 0; font-size: 25px; font-weight: 650; line-height: 1.3; }
 .lane-dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--lane); }
 .lane[data-status=backlog] .lane-dot { background: transparent; border: 2px solid var(--lane); }
 .lane-count { min-width: 22px; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; }
-.lane-heading > .icon-button { width: 30px; min-width: 30px; height: 32px; min-height: 32px; }
-.sort-control { position: relative; display: grid; place-items: center; margin-left: auto; width: 30px; height: 32px; color: var(--muted); border-radius: 5px; flex: 0 0 auto; }
+.lane-heading > .icon-button { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+.sort-control { position: relative; display: grid; place-items: center; margin-left: auto; width: 44px; height: 44px; color: var(--muted); border-radius: 5px; flex: 0 0 auto; }
 .sort-control:hover, .sort-control.is-sorted { background: var(--card); color: var(--accent); }
 .sort-control:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sort-control .icon { width: 16px; height: 16px; }
@@ -475,7 +475,8 @@ textarea { resize: vertical; line-height: 1.6; }
   .workspace-header { padding: 0 14px; }
   .board-heading { min-height: 62px; padding: 10px 0; gap: 8px; }
   #project-title { font-size: 19px; }
-  #project-subtitle, #project-description { display: none; }
+  #project-subtitle { display: none; }
+  #project-description:not([hidden]) { display: block; white-space: normal; overflow-wrap: anywhere; }
   .heading-actions { gap: 0; }
   .heading-actions .icon-button { width: 36px; min-width: 36px; height: 36px; }
   .board-tools #add-task, .board-tools #add-category { width: 36px; min-width: 36px; height: 34px; min-height: 34px; padding: 0; }
@@ -494,7 +495,7 @@ textarea { resize: vertical; line-height: 1.6; }
   .filters-open .filters select { width: 100%; }
   .board { padding: 0 14px 20px; gap: 14px; grid-template-columns: repeat(var(--category-count,4),minmax(264px,1fr)); }
   .card-controls { opacity: 1; }
-  .card-controls button { min-height: 32px; height: 32px; min-width: 32px; width: 32px; }
+  .card-controls button { min-height: 44px; height: 44px; min-width: 44px; width: 44px; }
   .welcome { padding-top: 28px; }
   .notice { max-height: 64px; }
   dialog { padding: 20px; }
@@ -549,7 +550,7 @@ textarea { resize: vertical; line-height: 1.6; }
 .category-info strong { font-size: 13px; overflow-wrap: anywhere; }
 .category-info span { font-size: 11px; color: var(--muted); }
 .category-actions { display: flex; gap: 2px; flex-shrink: 0; }
-.category-actions button { width: 30px; min-width: 30px; height: 32px; min-height: 32px; }
+.category-actions button { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
 .category-color-field { display: flex; align-items: center; gap: 12px; }
 .category-color-field input[type=color] { width: 48px; height: 36px; min-height: 36px; padding: 3px; margin: 0; }
 #remove-category-message { line-height: 1.6; overflow-wrap: anywhere; }
